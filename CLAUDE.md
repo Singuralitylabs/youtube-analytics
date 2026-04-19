@@ -92,12 +92,27 @@ Render（FastAPI 0.135）
 
 | パス | 役割 |
 |------|------|
-| `app/page.tsx` | `/` — ダッシュボード（KPI カード・登録者数推移・総再生数グラフ） |
-| `app/rankings/page.tsx` | `/rankings` — 指標・期間別の動画ランキング |
-| `app/videos/[id]/page.tsx` | `/videos/:id` — 動画詳細（時系列・流入経路・視聴者属性） |
-| `app/compare/page.tsx` | `/compare` — 複数動画の指標比較 |
-| `components/charts/` | `LineChart.tsx`、`BarChart.tsx`、`PieChart.tsx`（Recharts 3） |
+| `app/globals.css` | デザイントークン（CSS 変数 + `@theme inline`）。フォント変数・配色・`ga-card`/`chip`/`ticker` 等の共通クラス |
+| `app/layout.tsx` | 共通レイアウト（Sidebar + TopBar + main）。`next/font` で Manrope / IBM Plex Mono を読み込み |
+| `app/page.tsx` | `/` — ダッシュボード（KPI カード × 3・期間セグメント・登録者数/総再生数推移・Top5動画・データ収集ボタン） |
+| `app/rankings/page.tsx` | `/rankings` — 指標ピル × 期間セグメント・表彰台 × 3・リーダーボードテーブル |
+| `app/videos/[id]/page.tsx` | `/videos/:id` — ヒーロー＋4統計・時系列パネル・流入経路・視聴者属性 |
+| `app/compare/page.tsx` | `/compare` — 動画ピッカー（最大 8）・選択チップ・重ね折れ線・期間内合計 |
+| `components/layout/Sidebar.tsx` | 左ナビ（Reports セクションのみ） |
+| `components/layout/TopBar.tsx` | 上部 sticky バー（パンくず・最終収集日チップ） |
+| `components/charts/LineChart.tsx` | グラデーション領域付き折れ線（Recharts 3） |
+| `components/charts/BarChart.tsx` | 縦/横棒（rainbow オプションで多色化） |
+| `components/charts/PieChart.tsx` | ドーナツ + サイド凡例 |
+| `components/charts/Sparkline.tsx` | KPI カード内の小型推移描画（area / bars） |
+| `components/charts/shared.tsx` | 共通 `ChartTooltip` と `CHART_COLORS` パレット |
+| `components/ui/KpiCard.tsx` | KPI カード（数値・デルタチップ・スパークライン・ホバーグロー） |
+| `components/ui/Panel.tsx` | `ga-card` レイアウト共通コンテナ（eyebrow/title/actions スロット） |
+| `components/ui/PageHeader.tsx` | ページ見出し |
+| `components/ui/SegmentedControl.tsx` | 期間など択一選択 |
+| `components/ui/EmptyState.tsx` | データ無し表示 |
+| `components/ui/{button,input,select,table,card,badge}.tsx` | shadcn/ui ベース。トークンに合わせて再調整 |
 | `lib/api.ts` | バックエンド API クライアント |
+| `lib/utils.ts` | `cn` / `formatNumber` / `formatCompact` / `pctDelta` / `formatShortDate` 等 |
 | `types/index.ts` | 共通型定義 |
 
 ### API エンドポイント一覧

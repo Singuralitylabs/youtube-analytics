@@ -137,7 +137,8 @@ youtube-analytics/
 ├── frontend/                            # Next.js アプリケーション
 │   ├── src/
 │   │   ├── app/                         # App Router
-│   │   │   ├── layout.tsx              # 共通レイアウト（ナビゲーション）
+│   │   │   ├── globals.css             # Tailwind v4 + デザイントークン（フォント・配色）
+│   │   │   ├── layout.tsx              # 共通レイアウト（Sidebar + TopBar + main）
 │   │   │   ├── page.tsx                # / ダッシュボード
 │   │   │   ├── rankings/
 │   │   │   │   └── page.tsx            # /rankings 動画ランキング
@@ -148,14 +149,29 @@ youtube-analytics/
 │   │   │       └── page.tsx            # /compare 動画比較
 │   │   ├── components/
 │   │   │   ├── layout/
-│   │   │   │   └── Sidebar.tsx
+│   │   │   │   ├── Sidebar.tsx         # 左ナビ（Reports セクションのみ）
+│   │   │   │   └── TopBar.tsx          # 上部バー（パンくず + 最終収集日表示）
 │   │   │   ├── charts/
-│   │   │   │   ├── LineChart.tsx
-│   │   │   │   ├── BarChart.tsx
-│   │   │   │   └── PieChart.tsx
-│   │   │   └── ui/                     # shadcn/ui コンポーネント
+│   │   │   │   ├── LineChart.tsx       # 折れ線（グラデーション領域 + 共通ツールチップ）
+│   │   │   │   ├── BarChart.tsx        # 縦/横棒
+│   │   │   │   ├── PieChart.tsx        # ドーナツ + サイド凡例
+│   │   │   │   ├── Sparkline.tsx       # KPI カード内の小型推移描画
+│   │   │   │   └── shared.tsx          # ChartTooltip / CHART_COLORS パレット
+│   │   │   └── ui/                     # shadcn/ui ベース + 独自プリミティブ
+│   │   │       ├── button.tsx          # shadcn/ui (再調整)
+│   │   │       ├── input.tsx           # shadcn/ui (再調整)
+│   │   │       ├── select.tsx          # shadcn/ui (再調整)
+│   │   │       ├── table.tsx           # shadcn/ui (再調整)
+│   │   │       ├── card.tsx            # shadcn/ui
+│   │   │       ├── badge.tsx           # shadcn/ui
+│   │   │       ├── KpiCard.tsx         # KPI カード（数値・デルタ・スパークライン）
+│   │   │       ├── Panel.tsx           # ga-card レイアウト共通コンテナ
+│   │   │       ├── PageHeader.tsx      # ページ見出し（eyebrow/title/actions）
+│   │   │       ├── SegmentedControl.tsx # 期間など択一選択
+│   │   │       └── EmptyState.tsx      # データ無し表示
 │   │   ├── lib/
-│   │   │   └── api.ts                  # バックエンド API クライアント
+│   │   │   ├── api.ts                  # バックエンド API クライアント
+│   │   │   └── utils.ts                # cn / formatNumber / formatCompact / pctDelta 等
 │   │   └── types/
 │   │       └── index.ts                # 共通型定義
 │   ├── package.json
@@ -179,14 +195,37 @@ youtube-analytics/
 | グラフ | Recharts | 3.x | |
 | データフェッチ | SWR | 2.x | |
 
+### 共通レイアウト
+
+| 領域 | 役割 |
+|------|------|
+| **Sidebar**（固定 248px） | 左ナビゲーション。「Reports」セクションのみ（ダッシュボード／動画ランキング／比較分析） |
+| **TopBar**（高さ 60px、sticky） | パンくず、最終収集日チップ（Sheets 時系列の最新 `collected_at` を実値表示） |
+| メインエリア | 最大 1440px、左右 32px パディング |
+
 ### ページ構成
 
 | URL | ページ名 | 主要コンポーネント |
 |-----|---------|------------------|
-| `/` | ダッシュボード | KPI カード × 3、登録者数推移グラフ、総再生数グラフ |
-| `/rankings` | 動画ランキング | 指標/期間セレクター、ランキングテーブル、棒グラフ |
-| `/videos/:id` | 動画詳細 | 指標カード × 4、時系列グラフ、流入経路円グラフ、属性棒グラフ |
-| `/compare` | 比較分析 | 動画マルチセレクト、指標セレクト、複数動画重ね折れ線グラフ |
+| `/` | ダッシュボード | KPI カード × 3（登録者・総再生数・公開動画。実データ駆動のデルタ／スパークライン付）／期間セグメント（7/30/90 日）／登録者数推移チャート／Top 5 動画パネル／総再生数推移チャート／データ収集ボタン |
+| `/rankings` | 動画ランキング | 指標ピル（再生数・視聴時間・維持率）／期間セグメント（7/30/60/90 日）／表彰台カード（Top 3）／リーダーボード（インライン進捗バー） |
+| `/videos/:id` | 動画詳細 | グラデーションヒーロー＋4 統計ストリップ／時系列パネル（指標・期間切替＋ミニ統計）／流入経路ドーナツ／視聴者属性バー |
+| `/compare` | 比較分析 | 動画ピッカー（最大 8 本、検索付き）／選択チップバー／重ね折れ線グラフ／期間内合計バー |
+
+### デザインシステム
+
+| 領域 | 内容 |
+|------|------|
+| **配色** | 明背景 `#f4f6fa`（ドット格子テクスチャ）+ サーフェス白、ブランド `#1a73e8`、アクセント `#0b8d77`、チャート 6 色を CSS 変数で公開（`--chart-1`〜`--chart-6`） |
+| **フォント** | **Manrope**（本文・見出し）／**IBM Plex Mono**（数値、`.font-num` `.ticker`）。`next/font/google` で読み込み |
+| **トークン定義** | `frontend/src/app/globals.css` に集約（`@theme inline` + CSS 変数）。`@layer components` に `ga-card` `chip` `pulse-dot` `reveal` `skeleton` 等のユーティリティクラス |
+| **共通プリミティブ** | `KpiCard` / `Panel` / `PageHeader` / `SegmentedControl` / `EmptyState` / `Sparkline` |
+| **shadcn/ui** | `Button` / `Input` / `Select` / `Table` を同じトークンに合わせて再調整 |
+
+### スコープ外（意図的に持たない）
+
+- グローバル日付フィルタ、グローバル検索、リアルタイム更新、通知、マルチチャンネル切替、ユーザー認証
+  - 単一チャンネルの推移分析という目的に対して過剰なため、UI 上にも置かない方針
 
 ---
 
