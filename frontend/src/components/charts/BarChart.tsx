@@ -3,12 +3,15 @@
 import {
   Bar,
   CartesianGrid,
+  Cell,
   BarChart as RechartsBarChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+
+import { ChartTooltip, CHART_COLORS } from "./shared";
 
 export interface BarChartProps {
   data: Record<string, unknown>[];
@@ -19,6 +22,8 @@ export interface BarChartProps {
   layout?: "horizontal" | "vertical";
   yTickFormatter?: (value: number) => string;
   xTickFormatter?: (value: string) => string;
+  /** Use a different color per bar from the chart palette */
+  rainbow?: boolean;
 }
 
 export function BarChart({
@@ -26,10 +31,11 @@ export function BarChart({
   xKey,
   yKey,
   height = 300,
-  color = "#2563eb",
+  color = "var(--chart-1)",
   layout = "horizontal",
   yTickFormatter,
   xTickFormatter,
+  rainbow = false,
 }: BarChartProps) {
   const isVertical = layout === "vertical";
   return (
@@ -38,23 +44,43 @@ export function BarChart({
         <RechartsBarChart
           data={data}
           layout={layout}
-          margin={{ top: 10, right: 20, left: 10, bottom: 10 }}
+          margin={{ top: 8, right: 16, left: 4, bottom: 4 }}
+          barCategoryGap={isVertical ? 6 : "22%"}
         >
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <defs>
+            <linearGradient id="bar-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.95} />
+              <stop offset="100%" stopColor={color} stopOpacity={0.55} />
+            </linearGradient>
+            <linearGradient id="bar-grad-h" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor={color} stopOpacity={0.55} />
+              <stop offset="100%" stopColor={color} stopOpacity={0.95} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid
+            stroke="var(--border)"
+            strokeDasharray="2 4"
+            vertical={isVertical}
+            horizontal={!isVertical}
+          />
           {isVertical ? (
             <>
               <XAxis
                 type="number"
                 stroke="var(--muted-foreground)"
-                fontSize={12}
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
                 tickFormatter={yTickFormatter}
               />
               <YAxis
                 type="category"
                 dataKey={xKey}
                 stroke="var(--muted-foreground)"
-                fontSize={12}
-                width={160}
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+                width={180}
                 tickFormatter={xTickFormatter}
               />
             </>
@@ -63,25 +89,42 @@ export function BarChart({
               <XAxis
                 dataKey={xKey}
                 stroke="var(--muted-foreground)"
-                fontSize={12}
+                fontSize={11}
+                tickLine={false}
+                axisLine={{ stroke: "var(--border)" }}
                 tickFormatter={xTickFormatter}
+                dy={4}
               />
               <YAxis
                 stroke="var(--muted-foreground)"
-                fontSize={12}
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
                 tickFormatter={yTickFormatter}
+                width={56}
               />
             </>
           )}
           <Tooltip
-            contentStyle={{
-              backgroundColor: "var(--popover)",
-              border: "1px solid var(--border)",
-              borderRadius: "6px",
-              fontSize: "12px",
-            }}
+            cursor={{ fill: "var(--muted)", opacity: 0.35 }}
+            content={<ChartTooltip valueFormatter={yTickFormatter} />}
           />
-          <Bar dataKey={yKey} fill={color} radius={[4, 4, 0, 0]} />
+          <Bar
+            dataKey={yKey}
+            radius={isVertical ? [0, 6, 6, 0] : [6, 6, 0, 0]}
+            fill={isVertical ? "url(#bar-grad-h)" : "url(#bar-grad)"}
+            isAnimationActive
+            animationDuration={650}
+          >
+            {rainbow &&
+              data.map((_, i) => (
+                <Cell
+                  key={i}
+                  fill={CHART_COLORS[i % CHART_COLORS.length]}
+                  fillOpacity={0.9}
+                />
+              ))}
+          </Bar>
         </RechartsBarChart>
       </ResponsiveContainer>
     </div>

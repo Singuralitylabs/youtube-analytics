@@ -1,84 +1,275 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------
+   YouTube Analytics — design tokens
+   GA4-inspired console aesthetic with editorial typography.
+--------------------------------------------------------------- */
+
 @theme inline {
+  --font-sans: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo,
+    monospace;
+
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+
+  --color-card: var(--surface);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-secondary: var(--surface-2);
+  --color-secondary-foreground: var(--foreground);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: hsl(0 0% 100%);
+
   --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--border);
+  --color-ring: var(--primary);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
 }
 
 :root {
-  --background: hsl(0 0% 100%);
-  --foreground: hsl(240 10% 3.9%);
-  --card: hsl(0 0% 100%);
-  --card-foreground: hsl(240 10% 3.9%);
-  --popover: hsl(0 0% 100%);
-  --popover-foreground: hsl(240 10% 3.9%);
-  --primary: hsl(240 5.9% 10%);
-  --primary-foreground: hsl(0 0% 98%);
-  --secondary: hsl(240 4.8% 95.9%);
-  --secondary-foreground: hsl(240 5.9% 10%);
-  --muted: hsl(240 4.8% 95.9%);
-  --muted-foreground: hsl(240 3.8% 46.1%);
-  --accent: hsl(240 4.8% 95.9%);
-  --accent-foreground: hsl(240 5.9% 10%);
-  --destructive: hsl(0 84.2% 60.2%);
-  --destructive-foreground: hsl(0 0% 98%);
-  --border: hsl(240 5.9% 90%);
-  --input: hsl(240 5.9% 90%);
-  --ring: hsl(240 5.9% 10%);
-  --radius: 0.5rem;
-}
+  /* Surfaces — warm-cool light gray base, a touch of blue */
+  --background: #f4f6fa;
+  --surface: #ffffff;
+  --surface-2: #f0f3f8;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: hsl(240 10% 3.9%);
-    --foreground: hsl(0 0% 98%);
-    --card: hsl(240 10% 3.9%);
-    --card-foreground: hsl(0 0% 98%);
-    --popover: hsl(240 10% 3.9%);
-    --popover-foreground: hsl(0 0% 98%);
-    --primary: hsl(0 0% 98%);
-    --primary-foreground: hsl(240 5.9% 10%);
-    --secondary: hsl(240 3.7% 15.9%);
-    --secondary-foreground: hsl(0 0% 98%);
-    --muted: hsl(240 3.7% 15.9%);
-    --muted-foreground: hsl(240 5% 64.9%);
-    --accent: hsl(240 3.7% 15.9%);
-    --accent-foreground: hsl(0 0% 98%);
-    --destructive: hsl(0 62.8% 30.6%);
-    --destructive-foreground: hsl(0 0% 98%);
-    --border: hsl(240 3.7% 15.9%);
-    --input: hsl(240 3.7% 15.9%);
-    --ring: hsl(240 4.9% 83.9%);
-  }
+  /* Type */
+  --foreground: #0b1320;
+  --muted: #eef1f6;
+  --muted-foreground: #5b6678;
+
+  /* Brand */
+  --primary: #1a73e8;
+  --primary-foreground: #ffffff;
+  --primary-soft: #e8f0fe;
+
+  --accent: #0b8d77;
+  --accent-foreground: #ffffff;
+
+  /* Semantic */
+  --success: #1e8e3e;
+  --warning: #f29900;
+  --danger: #d93025;
+
+  /* Borders — barely there */
+  --border: rgba(15, 23, 42, 0.07);
+  --border-strong: rgba(15, 23, 42, 0.14);
+
+  /* Chart palette — GA-spirited but distinct */
+  --chart-1: #1a73e8;
+  --chart-2: #0b8d77;
+  --chart-3: #f29900;
+  --chart-4: #d93025;
+  --chart-5: #ab47bc;
+  --chart-6: #00acc1;
+
+  /* Geometry */
+  --topbar-h: 60px;
+  --sidebar-w: 248px;
 }
 
 @layer base {
   * {
     border-color: var(--border);
   }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   body {
     background-color: var(--background);
     color: var(--foreground);
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01" 1, "cv11" 1, "calt" 1;
+    letter-spacing: -0.005em;
+
+    /* Subtle dot grid that gives the page atmosphere without noise */
+    background-image:
+      radial-gradient(
+        circle at 1px 1px,
+        rgba(15, 23, 42, 0.05) 1px,
+        transparent 0
+      );
+    background-size: 22px 22px;
+    background-attachment: fixed;
   }
+
+  /* Numbers in headings & data look intentional */
+  .font-display {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .font-num {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum" 1, "ss01" 1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /* Selection */
+  ::selection {
+    background: var(--primary-soft);
+    color: var(--primary);
+  }
+
+  /* Scrollbars — slim, intentional */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(15, 23, 42, 0.12);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(15, 23, 42, 0.22);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+}
+
+@layer components {
+  /* Refined card — barely-there border, micro elevation */
+  .ga-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    box-shadow:
+      0 1px 0 rgba(15, 23, 42, 0.02),
+      0 6px 16px -8px rgba(15, 23, 42, 0.06);
+  }
+
+  /* Filled chip / pill */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: 0;
+  }
+
+  /* Number ticker — for the giant headline numbers */
+  .ticker {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum" 1, "ss01" 1;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+  }
+
+  /* Soft hairline divider */
+  .hairline {
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      var(--border-strong) 12%,
+      var(--border-strong) 88%,
+      transparent
+    );
+  }
+
+  /* Subtle "alive" pulse dot */
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--success);
+    box-shadow: 0 0 0 0 rgba(30, 142, 62, 0.6);
+    animation: pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* Reveal-on-mount: stagger via inline --d */
+  .reveal {
+    opacity: 0;
+    transform: translateY(6px);
+    animation: reveal 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation-delay: var(--d, 0ms);
+  }
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(30, 142, 62, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(30, 142, 62, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(30, 142, 62, 0);
+  }
+}
+
+@keyframes reveal {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    rgba(255, 255, 255, 0.6) 50%,
+    var(--muted) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: 6px;
 }
