@@ -145,6 +145,47 @@ class YouTubeAnalyticsClient:
             for row in rows
         ]
 
+    def top_videos(
+        self, days: int, limit: int = 50, sort: str = "-views"
+    ) -> list[dict[str, Any]]:
+        """Top videos with views, watch-time, avg duration AND retention in one call.
+
+        Unlike ``rankings(metric=...)``, this multi-metric query is supported for
+        ``averageViewDuration`` / ``averageViewPercentage`` because they ride
+        along as columns rather than being the sort key (sorting by those metrics
+        with ``dimensions=video`` returns 400/500). ``sort`` must be a supported
+        key such as ``-views`` or ``-estimatedMinutesWatched``.
+        """
+        start, end = _date_range(days)
+        resp = self._query(
+            startDate=start,
+            endDate=end,
+            metrics=(
+                "views,estimatedMinutesWatched,"
+                "averageViewDuration,averageViewPercentage"
+            ),
+            dimensions="video",
+            sort=sort,
+            maxResults=limit,
+        )
+        headers = [h["name"] for h in resp.get("columnHeaders", [])]
+        rows = resp.get("rows") or []
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            rec = dict(zip(headers, row))
+            result.append(
+                {
+                    "video_id": rec.get("video", ""),
+                    "views": int(rec.get("views", 0) or 0),
+                    "minutes": int(rec.get("estimatedMinutesWatched", 0) or 0),
+                    "avg_view_sec": round(float(rec.get("averageViewDuration", 0) or 0), 1),
+                    "retention_pct": round(
+                        float(rec.get("averageViewPercentage", 0) or 0), 1
+                    ),
+                }
+            )
+        return result
+
     def compare(
         self, video_ids: list[str], metric: str, days: int
     ) -> list[dict[str, Any]]:

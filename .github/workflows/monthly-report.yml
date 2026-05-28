@@ -1,0 +1,123 @@
+name: Monthly Analytics Report
+
+# 毎月、直近90日の分析＋対策レポートを生成し、reports/ にコミットして
+# Slack に要約＋GitHub URL を通知する。
+on:
+  schedule:
+    # 毎月1日 00:00 UTC（= 09:00 JST）。ラベルは前月（直前に終わった月）。
+    - cron: "0 0 1 * *"
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "対象月 YYYY-MM（空欄なら前月を自動算出）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: monthly-report
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Resolve target month
+        id: month
+        env:
+          INPUT_MONTH: ${{ github.event.inputs.month }}
+        run: |
+          if [ -n "$INPUT_MONTH" ]; then
+            VALUE="$INPUT_MONTH"
+          else
+            VALUE="$(date -u -d '1 month ago' +%Y-%m)"
+          fi
+          echo "value=$VALUE" >> "$GITHUB_OUTPUT"
+          echo "対象月: $VALUE"
+
+      - name: Materialize OAuth credentials
+        working-directory: backend
+        env:
+          TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
+          CLIENT_SECRETS_JSON: ${{ secrets.GOOGLE_CLIENT_SECRETS_JSON }}
+        run: |
+          printf '%s' "$TOKEN_JSON" > token.json
+          printf '%s' "$CLIENT_SECRETS_JSON" > client_secrets.json
+
+      - name: Generate report
+        working-directory: backend
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TARGET_MONTH: ${{ steps.month.outputs.value }}
+        run: |
+          python scripts/generate_monthly_report.py --month "$TARGET_MONTH"
+
+      - name: Commit report
+        id: commit
+        env:
+          TARGET_MONTH: ${{ steps.month.outputs.value }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add reports/*.md
+          if git diff --staged --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "コミット対象の変更なし"
+          else
+            git commit -m "Add monthly insight report ${TARGET_MONTH}"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Notify Slack
+        if: steps.commit.outputs.changed == 'true'
+        working-directory: backend
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TARGET_MONTH: ${{ steps.month.outputs.value }}
+        run: |
+          python scripts/generate_monthly_report.py --month "$TARGET_MONTH" --notify-only
+
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TARGET_MONTH: ${{ steps.month.outputs.value }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL 未設定のため失敗通知をスキップ"
+            exit 0
+          fi
+          # Heredoc avoids JSON-escaping pitfalls; the run URL auto-links in Slack.
+          cat > /tmp/slack_failure.json <<EOF
+          {"text": ":x: *月次レポート生成に失敗しました*（${TARGET_MONTH}）\n${RUN_URL} でログを確認してください"}
+          EOF
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            --data @/tmp/slack_failure.json "$SLACK_WEBHOOK_URL" \
+            || echo "Slack 失敗通知の送信に失敗しました"
+
+      - name: Cleanup credentials
+        if: always()
+        working-directory: backend
+        run: rm -f token.json client_secrets.json

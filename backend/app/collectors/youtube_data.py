@@ -68,6 +68,18 @@ class YouTubeDataClient:
             "video_count": int(stats.get("videoCount", 0)),
         }
 
+    def get_channel_title(self, channel_id: str) -> str:
+        """Return the channel's display title (empty string if not found)."""
+        service = self._build()
+        response = service.channels().list(
+            part="snippet",
+            id=channel_id,
+        ).execute()
+        items = response.get("items") or []
+        if not items:
+            return ""
+        return items[0].get("snippet", {}).get("title", "")
+
     def list_video_ids(self, channel_id: str) -> list[str]:
         """Return all video IDs uploaded to the channel."""
         service = self._build()

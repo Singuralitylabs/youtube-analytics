@@ -1,6 +1,10 @@
 # YouTube Analytics
 
-自チャンネルの YouTube 統計を可視化するダッシュボード。Next.js フロントエンドと FastAPI バックエンドで構成し、YouTube Data API v3 / YouTube Analytics API / Google Sheets API からデータを取得する。
+自チャンネルの YouTube 統計を分析するツール。YouTube Data API v3 / YouTube Analytics API / Google Sheets API からデータを取得する。
+
+> **現在の主機能は「月次レポートの自動生成」です。** 毎月、直近90日の分析＋対策レポートを自動生成して `reports/YYYY-MM.md` にコミットし、Slack に通知します。セットアップと実行は [docs/monthly-report.md](docs/monthly-report.md) を参照。
+>
+> **フロントエンド（`frontend/`）の開発は凍結中**です（コードは残存）。以下のダッシュボード関連の記述は凍結された Web アプリ構成のものです。
 
 ## 構成
 
@@ -83,11 +87,7 @@ cd frontend && npm run dev
 
 ## デプロイ
 
-### フロントエンド (Vercel)
-
-1. Vercel に GitHub リポジトリを接続し、Root Directory に `frontend` を指定
-2. 環境変数 `NEXT_PUBLIC_API_BASE_URL` に Render のバックエンド URL を設定
-3. デプロイ
+> フロントエンド (`frontend/`) は開発凍結中のため、デプロイしません（Vercel への自動デプロイは廃止）。月次レポートの自動生成は GitHub Actions で動きます（[docs/monthly-report.md](docs/monthly-report.md)）。
 
 ### バックエンド (Render 無料プラン)
 
@@ -97,13 +97,15 @@ cd frontend && npm run dev
 4. 環境変数を設定
    - `YOUTUBE_API_KEY`, `CHANNEL_ID`, `SPREADSHEET_ID`
    - `CLIENT_SECRETS_FILE`, `TOKEN_FILE`
-   - `FRONTEND_URL` (Vercel のフロントエンド URL)
+   - `FRONTEND_URL` (凍結中フロントエンドの CORS 許可先。ローカル開発で使う場合のみ)
 5. `client_secrets.json` / `token.json` は Secret Files として配置するか、環境変数経由で注入する
 6. 無料プランは無通信時にスリープし、初回アクセス時に約30秒の起動待ちが発生する
 
 ## ドキュメント
 
-- [docs/design.md](docs/design.md) — システム構成、技術スタック、デプロイ構成
+- [docs/monthly-report.md](docs/monthly-report.md) — **月次レポート自動生成（現行の主機能）** のパイプライン・セットアップ・実行
+- [docs/analysis-playbook.md](docs/analysis-playbook.md) — レポートが従う分析方法論
+- [docs/design.md](docs/design.md) — システム構成、技術スタック、デプロイ構成（凍結中の Web アプリ）
 - [docs/api.md](docs/api.md) — 全 10 エンドポイントの仕様
 - [docs/sheets.md](docs/sheets.md) — Google Sheets の構成
 
@@ -112,4 +114,6 @@ cd frontend && npm run dev
 - **YouTube Analytics API**: 直近 90 日分のデータのみ取得可能
 - **YouTube Data API v3 クォータ**: 1 日 10,000 ユニット (1 回のデータ収集で約 200 ユニット)
 - **OAuth スコープ**: `youtube.readonly`, `yt-analytics.readonly`, `spreadsheets`
+- **OAuth 同意画面は「本番」公開必須**: Testing のままだと refresh token が 7 日で失効し、月次自動実行が壊れる
+- **リポジトリは private**: 月次レポート（`reports/`）にチャンネルの非公開データを含むため。`reports/` は private 前提で追跡対象（`docs/` は設計書専用）
 - **秘匿ファイル**: `client_secrets.json`, `token.json`, `.env` はコミット禁止 (`.gitignore` 済み)

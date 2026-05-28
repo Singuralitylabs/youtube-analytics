@@ -1,9 +1,15 @@
 # YouTube Analytics System — 基本設計書
 
+> **方針転換のお知らせ（現行）**: 本システムは「Web ダッシュボードを対話操作する」構成から、**「月次の分析＋対策レポートを自動生成し Slack 通知する」構成**へ移行しました。フロントエンド（`frontend/`）の開発は凍結しています（コードは残存）。バックエンドの collector 群はレポート生成（`backend/app/report/`）で再利用しています。詳細は [monthly-report.md](./monthly-report.md) を参照。
+>
+> 以下の本文は凍結中の Web アプリ構成の設計です。
+
 ## 関連ドキュメント
 
 | ドキュメント | 内容 |
 |-------------|------|
+| [monthly-report.md](./monthly-report.md) | **月次レポート自動生成（現行の主機能）** のパイプライン・セットアップ |
+| [analysis-playbook.md](./analysis-playbook.md) | レポートが従う分析方法論 |
 | [sheets.md](./sheets.md) | Google スプレッドシート構成（登録者数履歴の保存） |
 | [api.md](./api.md) | API設計（エンドポイント・レスポンス仕様） |
 
@@ -31,7 +37,7 @@
 | 対象 | 自分のチャンネルのみ |
 | 動画数 | 51〜200本 |
 | 出力 | Webダッシュボード（4画面） |
-| デプロイ | クラウド（Vercel + Render） |
+| デプロイ | Render（バックエンド）。フロントエンドは凍結中で未デプロイ |
 | 月額費用 | $0 |
 
 ---
@@ -245,21 +251,25 @@ youtube-analytics/
 
 ## 8. デプロイ構成
 
+> フロントエンドは凍結中のため Vercel へのデプロイは廃止。バックエンドのみ Render にデプロイし、月次レポートは GitHub Actions で生成する（[monthly-report.md](./monthly-report.md)）。
+
 ```
 [GitHub リポジトリ]
-    ├─ frontend/ ─── push ───→ Vercel（自動デプロイ、無料）
-    └─ backend/  ─── push ───→ Render（無料 Web Service）
-                                    ※ DBなし。Google Sheetsを外部ストレージとして使用
+    ├─ frontend/ ─── 凍結中（デプロイしない）
+    ├─ backend/  ─── push ───→ Render（無料 Web Service）
+    │                               ※ DBなし。Google Sheetsを外部ストレージとして使用
+    └─ .github/  ─── 月次 cron ─→ GitHub Actions（レポート生成・コミット・Slack通知）
 ```
 
 ### 費用
 
 | サービス | プラン | 月額 |
 |---------|--------|------|
-| Vercel | Hobby（無料） | $0 |
 | Render | 無料 Web Service | $0 |
 | Google Sheets | 無料 | $0 |
 | YouTube API | 無料枠内 | $0 |
+| Gemini API | 無料枠内 | $0 |
+| GitHub Actions | 無料枠内 | $0 |
 | **合計** | | **$0** |
 
 ### 環境変数
@@ -273,13 +283,11 @@ youtube-analytics/
 | `CLIENT_SECRETS_FILE` | OAuth クライアントシークレットのパス |
 | `TOKEN_FILE` | OAuth トークンの保存パス |
 | `SPREADSHEET_ID` | 登録者数履歴を記録するスプレッドシートのID |
-| `FRONTEND_URL` | CORS 許可先（Vercel のURL） |
+| `FRONTEND_URL` | CORS 許可先（凍結中フロントエンドのオリジン。ローカル開発用） |
 
-**frontend（Vercel の Environment Variables）**
+**frontend（凍結中・デプロイなし）**
 
-| 変数名 | 説明 |
-|--------|------|
-| `NEXT_PUBLIC_API_BASE_URL` | バックエンドAPI の URL（RenderのURL） |
+ローカルで動かす場合のみ `NEXT_PUBLIC_API_BASE_URL` にバックエンド API の URL を設定する。
 
 ### ローカル開発
 
