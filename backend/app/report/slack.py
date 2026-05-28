@@ -39,20 +39,29 @@ def build_summary(
 
     lines = [f":bar_chart: *月次インサイト {month}* — {title}"]
 
-    snippet = _lead_sentence(sections.get("key_finding", ""))
+    # When Gemini authoring failed we ship a numbers-only report; the interpretive
+    # fields hold a failure note, so skip the key-finding / hypothesis snippets
+    # (they would otherwise surface the failure text as if it were an insight).
+    degraded = bool(bundle.get("author_failed"))
+
     sub = _fmt_delta(snap.get("subscriber_count"), snap.get("subscriber_delta"))
     views = _fmt_delta(snap.get("total_view_count"), snap.get("total_view_delta"))
     lines.append(f"登録者 {sub} / 総再生 {views} / 動画 {_int(snap.get('video_count'))}本")
 
-    if snippet:
+    if degraded:
         lines.append("")
-        lines.append(f"*最重要発見*: {snippet}")
+        lines.append(":warning: *解釈生成に失敗したため数値のみのレポートです*")
+    else:
+        snippet = _lead_sentence(sections.get("key_finding", ""))
+        if snippet:
+            lines.append("")
+            lines.append(f"*最重要発見*: {snippet}")
 
-    headlines = _hypothesis_headlines(sections.get("hypotheses", ""))
-    if headlines:
-        lines.append("")
-        lines.append("*今月の対策（仮説）*:")
-        lines.extend(f"• {h}" for h in headlines)
+        headlines = _hypothesis_headlines(sections.get("hypotheses", ""))
+        if headlines:
+            lines.append("")
+            lines.append("*今月の対策（仮説）*:")
+            lines.extend(f"• {h}" for h in headlines)
 
     url = github_report_url(month)
     lines.append("")

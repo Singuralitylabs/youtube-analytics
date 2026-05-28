@@ -90,6 +90,12 @@ def _placeholder_sections() -> dict[str, str]:
     return {key: note for key in author.SECTION_KEYS}
 
 
+def _failed_author_sections(err: Exception) -> dict[str, str]:
+    """Placeholder body used when the Gemini call fails (numbers-only fallback)."""
+    note = f"_（解釈生成に失敗したため数値のみ掲載: {err}）_"
+    return {key: note for key in author.SECTION_KEYS}
+
+
 def _do_notify_only(month: str, state_file: str) -> int:
     if not os.path.exists(state_file):
         _err(f"state ファイルが見つかりません: {state_file}")
@@ -160,9 +166,18 @@ def main(argv: list[str] | None = None) -> int:
         playbook = _load_playbook()
         prior = _load_prior_report(output_dir, month)
         _err(f"前月レポート: {'あり' if prior else 'なし（初回扱い）'}")
-        sections = author.author_report(
-            bundle, playbook_text=playbook, prior_report_text=prior
-        )
+        try:
+            sections = author.author_report(
+                bundle, playbook_text=playbook, prior_report_text=prior
+            )
+        except Exception as err:  # noqa: BLE001 - degrade, don't lose the month.
+            # The deterministic numbers are already built; rather than abort the
+            # whole month on a Gemini failure, fall back to a numbers-only report
+            # and flag the degradation (surfaced in the report and Slack digest).
+            _err(f"解釈生成に失敗: {err}（数値のみでレポートを継続）")
+            bundle["warnings"].append(f"解釈セクション生成失敗（Gemini）: {err}")
+            bundle["author_failed"] = True
+            sections = _failed_author_sections(err)
 
     markdown = renderer.render_report(bundle, sections)
     path = renderer.write_report(markdown, output_dir, month)

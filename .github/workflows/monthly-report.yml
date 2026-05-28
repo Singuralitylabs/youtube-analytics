@@ -98,6 +98,25 @@ jobs:
         run: |
           python scripts/generate_monthly_report.py --month "$TARGET_MONTH" --notify-only
 
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TARGET_MONTH: ${{ steps.month.outputs.value }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL 未設定のため失敗通知をスキップ"
+            exit 0
+          fi
+          # Heredoc avoids JSON-escaping pitfalls; the run URL auto-links in Slack.
+          cat > /tmp/slack_failure.json <<EOF
+          {"text": ":x: *月次レポート生成に失敗しました*（${TARGET_MONTH}）\n${RUN_URL} でログを確認してください"}
+          EOF
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            --data @/tmp/slack_failure.json "$SLACK_WEBHOOK_URL" \
+            || echo "Slack 失敗通知の送信に失敗しました"
+
       - name: Cleanup credentials
         if: always()
         working-directory: backend
