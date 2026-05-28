@@ -48,5 +48,7 @@ dist/
 build/
 *.log
 
-# ---- Analysis reports (channel-specific data, keep local only) ----
-docs/insights/
+# NOTE: reports/ holds channel-specific monthly reports. They ARE tracked
+# (the repo is private) so the monthly GitHub Actions job can commit them and
+# Slack can link a stable GitHub URL. Do not ignore reports/ here unless
+# the repo is made public again. (docs/ is reserved for design docs.)

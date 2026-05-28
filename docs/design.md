@@ -1,9 +1,15 @@
 # YouTube Analytics System — 基本設計書
 
+> **方針転換のお知らせ（現行）**: 本システムは「Web ダッシュボードを対話操作する」構成から、**「月次の分析＋対策レポートを自動生成し Slack 通知する」構成**へ移行しました。フロントエンド（`frontend/`）の開発は凍結しています（コードは残存）。バックエンドの collector 群はレポート生成（`backend/app/report/`）で再利用しています。詳細は [monthly-report.md](./monthly-report.md) を参照。
+>
+> 以下の本文は凍結中の Web アプリ構成の設計です。
+
 ## 関連ドキュメント
 
 | ドキュメント | 内容 |
 |-------------|------|
+| [monthly-report.md](./monthly-report.md) | **月次レポート自動生成（現行の主機能）** のパイプライン・セットアップ |
+| [analysis-playbook.md](./analysis-playbook.md) | レポートが従う分析方法論 |
 | [sheets.md](./sheets.md) | Google スプレッドシート構成（登録者数履歴の保存） |
 | [api.md](./api.md) | API設計（エンドポイント・レスポンス仕様） |
 
