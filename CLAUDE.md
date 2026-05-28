@@ -184,4 +184,4 @@ Render（FastAPI 0.135）
 | バックエンド | FastAPI 0.135、Pydantic v2、pydantic-settings 2 |
 | 外部 API クライアント | google-api-python-client 2、google-auth-oauthlib 1 |
 | 月次レポート生成 | google-genai（Gemini API・無料枠）、GitHub Actions（月次 cron）、Slack Incoming Webhook |
-| デプロイ | Vercel（フロントエンド・凍結中）、Render 無料プラン（バックエンド） |
+| デプロイ | Render 無料プラン（バックエンド）。フロントエンドは凍結中で未デプロイ（Vercel 連携は廃止） |

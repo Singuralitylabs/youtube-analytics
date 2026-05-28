@@ -87,11 +87,7 @@ cd frontend && npm run dev
 
 ## デプロイ
 
-### フロントエンド (Vercel)
-
-1. Vercel に GitHub リポジトリを接続し、Root Directory に `frontend` を指定
-2. 環境変数 `NEXT_PUBLIC_API_BASE_URL` に Render のバックエンド URL を設定
-3. デプロイ
+> フロントエンド (`frontend/`) は開発凍結中のため、デプロイしません（Vercel への自動デプロイは廃止）。月次レポートの自動生成は GitHub Actions で動きます（[docs/monthly-report.md](docs/monthly-report.md)）。
 
 ### バックエンド (Render 無料プラン)
 
@@ -101,7 +97,7 @@ cd frontend && npm run dev
 4. 環境変数を設定
    - `YOUTUBE_API_KEY`, `CHANNEL_ID`, `SPREADSHEET_ID`
    - `CLIENT_SECRETS_FILE`, `TOKEN_FILE`
-   - `FRONTEND_URL` (Vercel のフロントエンド URL)
+   - `FRONTEND_URL` (凍結中フロントエンドの CORS 許可先。ローカル開発で使う場合のみ)
 5. `client_secrets.json` / `token.json` は Secret Files として配置するか、環境変数経由で注入する
 6. 無料プランは無通信時にスリープし、初回アクセス時に約30秒の起動待ちが発生する
 
