@@ -9,6 +9,7 @@ full report lives in the repo; Slack carries only the digest. Uses stdlib
 from __future__ import annotations
 
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -121,14 +122,30 @@ def _lead_sentence(markdown: str, limit: int = 180) -> str:
 
 
 def _hypothesis_headlines(markdown: str, limit: int = 3) -> list[str]:
-    """Pull '### 仮説 …' headings (or bold lead lines) from the hypotheses section."""
+    """Pull descriptive '### 仮説 #N: …' headings from the hypotheses section.
+
+    Skips the 'カード/仮説カード [日付]' wrapper heading and any bare '仮説 #N'
+    heading with no description, so the Slack digest carries the actual
+    countermeasure text rather than uninformative labels.
+    """
     headlines: list[str] = []
     for raw in markdown.splitlines():
         line = raw.strip()
-        if line.startswith("###"):
-            text = line.lstrip("#").strip()
-            if text:
-                headlines.append(text)
+        if not line.startswith("###"):
+            continue
+        text = line.lstrip("#").strip()
+        if not text or _is_wrapper_heading(text):
+            continue
+        headlines.append(text)
         if len(headlines) >= limit:
             break
     return headlines
+
+
+def _is_wrapper_heading(text: str) -> bool:
+    """True for generic wrapper/label headings that carry no insight."""
+    # "仮説カード 2026-05-28" etc.
+    if text.replace("【", "").replace("】", "").startswith("仮説カード"):
+        return True
+    # Bare "仮説 #1" / "仮説1" with no trailing description.
+    return bool(re.fullmatch(r"仮説\s*#?\d+[:：]?", text))
