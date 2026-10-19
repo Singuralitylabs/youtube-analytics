@@ -24,6 +24,7 @@ from app.report.weeks import (  # noqa: E402
     load_prior_weekly_report,
     parse_iso_week,
     previous_iso_week,
+    published_at_jst_display,
     published_instant_to_jst_date,
     should_skip_scheduled_weekly,
 )
@@ -60,6 +61,12 @@ class WeekHelpersTest(unittest.TestCase):
         self.assertNotEqual(
             published_instant_to_jst_date("2026-10-04T16:00:00Z"),
             date(2026, 10, 4),
+        )
+
+    def test_published_at_jst_display(self) -> None:
+        self.assertEqual(
+            published_at_jst_display("2026-10-04T16:00:00Z", "2026-10-04"),
+            "2026-10-05",
         )
 
     def test_should_skip_scheduled_weekly(self) -> None:
@@ -189,8 +196,77 @@ class BuilderWeeklyLogicTest(unittest.TestCase):
             },
         }
         views = [{"video_id": "in", "views": 10, "minutes": 1, "retention_pct": 50.0}]
-        rows = builder._new_videos_in_week(meta, week_start, week_end, views, {})
+        bundle: dict = {"warnings": []}
+        rows = builder._new_videos_in_week(
+            meta,
+            week_start,
+            week_end,
+            views,
+            {},
+            api_start="2026-10-04",
+            api_end="2026-10-11",
+            bundle=bundle,
+        )
         self.assertEqual([r["video_id"] for r in rows], ["in"])
+        # Display date is JST (Oct 5), not UTC stem (Oct 4).
+        self.assertEqual(rows[0]["published_at"], "2026-10-05")
+
+    def test_new_videos_fetches_metrics_outside_top_videos(self) -> None:
+        """New videos missing from top_videos still get real period metrics."""
+        week_start, week_end = date(2026, 10, 5), date(2026, 10, 11)
+        meta = {
+            "low": {
+                "title": "Outside Top50",
+                "published_at": "2026-10-06",
+                "published_at_iso": "2026-10-06T03:00:00Z",
+                "duration_sec": 60,
+                "engagement_pct": 1.0,
+            }
+        }
+        bundle: dict = {"warnings": []}
+        fetched = [
+            {
+                "video_id": "low",
+                "views": 42,
+                "minutes": 7,
+                "retention_pct": 55.0,
+            }
+        ]
+        with patch(
+            "app.report.builder._safe_video_period_metrics",
+            return_value=fetched,
+        ) as mock_fetch:
+            rows = builder._new_videos_in_week(
+                meta,
+                week_start,
+                week_end,
+                views_rows=[],  # not in top_videos
+                retention_by_id={},
+                api_start="2026-10-04",
+                api_end="2026-10-11",
+                bundle=bundle,
+            )
+        mock_fetch.assert_called_once_with(
+            ["low"], "2026-10-04", "2026-10-11", bundle
+        )
+        self.assertEqual(rows[0]["views"], 42)
+        self.assertEqual(rows[0]["retention_pct"], 55.0)
+        self.assertEqual(rows[0]["published_at"], "2026-10-06")
+
+    def test_hydrate_weekly_ranking_published_at_jst(self) -> None:
+        rows = [{"video_id": "a", "views": 10, "retention_pct": 40.0}]
+        meta = {
+            "a": {
+                "title": "A",
+                "published_at": "2026-10-04",
+                "published_at_iso": "2026-10-04T16:00:00Z",
+                "engagement_pct": 1.0,
+            }
+        }
+        out = builder._hydrate_weekly_ranking(
+            rows, meta, {}, prior_rank_by_id={}, value_key="views", top_n=5
+        )
+        self.assertEqual(out[0]["published_at"], "2026-10-05")
 
     def test_safe_top_videos_connection_error_degrades(self) -> None:
         bundle: dict = {"warnings": []}
@@ -280,6 +356,7 @@ class BuilderWeeklyLogicTest(unittest.TestCase):
             {"views": 300, "minutes": 100, "retention_pct": 35.0},
             {"views": 200, "minutes": 80, "retention_pct": 32.0},
         ]
+        fake_client.video_period_metrics.return_value = []
 
         videos_meta = {
             "v1": {

@@ -38,7 +38,11 @@ from app.report.retry import (
     is_retryable_api_error,
     with_retry,
 )
-from app.report.weeks import jst_range_to_analytics_dates, published_instant_to_jst_date
+from app.report.weeks import (
+    jst_range_to_analytics_dates,
+    published_at_jst_display,
+    published_instant_to_jst_date,
+)
 from config.settings import get_settings
 
 # OAuth-backed calls (Analytics, Sheets) can fail on HTTP errors *or* on
@@ -744,7 +748,14 @@ def build_weekly_bundle(
     bundle["period"] = _period_with_wow(period_now, period_prior)
 
     bundle["new_videos"] = _new_videos_in_week(
-        videos_meta, week_start, week_end, views_now, retention_by_id
+        videos_meta,
+        week_start,
+        week_end,
+        views_now,
+        retention_by_id,
+        api_start=api_start,
+        api_end=api_end,
+        bundle=bundle,
     )
 
     return bundle
@@ -765,6 +776,29 @@ def _safe_channel_totals(
             f"channel_totals({start_date}..{end_date}) 取得失敗: {err}"
         )
         return {"views": 0, "minutes": 0, "avg_view_sec": None, "retention_pct": None}
+
+
+def _safe_video_period_metrics(
+    video_ids: list[str],
+    start_date: str,
+    end_date: str,
+    bundle: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Fetch per-video period metrics; empty list on failure (warn + continue)."""
+    if not video_ids:
+        return []
+    try:
+        return _call_api(
+            f"video_period_metrics({len(video_ids)} ids, {start_date}..{end_date})",
+            lambda: youtube_analytics_client.video_period_metrics(
+                video_ids, start_date=start_date, end_date=end_date
+            ),
+        )
+    except Exception as err:  # noqa: BLE001 - degrade; never abort the report.
+        bundle["warnings"].append(
+            f"video_period_metrics({start_date}..{end_date}) 取得失敗: {err}"
+        )
+        return []
 
 
 def _delta_pct(
@@ -877,7 +911,10 @@ def _hydrate_weekly_ranking(
                 "rank_delta": rank_delta,
                 "video_id": vid,
                 "title": info.get("title", ""),
-                "published_at": info.get("published_at", ""),
+                "published_at": published_at_jst_display(
+                    str(info.get("published_at_iso", "")),
+                    str(info.get("published_at", "")),
+                ),
                 value_key: round(r.get(value_key, 0)),
                 "retention_pct": r.get("retention_pct", retention_by_id.get(vid)),
                 "engagement_pct": info.get("engagement_pct"),
@@ -893,27 +930,56 @@ def _new_videos_in_week(
     week_end: date,
     views_rows: list[dict[str, Any]],
     retention_by_id: dict[str, float],
+    *,
+    api_start: str,
+    api_end: str,
+    bundle: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Videos published during the target JST week, with in-week performance."""
+    """Videos published during the target JST week, with in-week performance.
+
+    Metrics prefer the weekly ``top_videos`` rows; IDs missing from that Top-N
+    (e.g. outside maxResults=50) are fetched via ``video_period_metrics``.
+    """
     views_by_id = {r["video_id"]: r for r in views_rows}
-    rows: list[dict[str, Any]] = []
+    new_ids: list[str] = []
     for vid, info in videos_meta.items():
         raw = info.get("published_at_iso") or info.get("published_at", "")
         published = published_instant_to_jst_date(str(raw))
         if published is None or published < week_start or published > week_end:
             continue
-        period = views_by_id.get(vid, {})
+        new_ids.append(vid)
+
+    missing = [vid for vid in new_ids if vid not in views_by_id]
+    for row in _safe_video_period_metrics(missing, api_start, api_end, bundle):
+        vid = row.get("video_id")
+        if vid:
+            views_by_id[vid] = row
+            if row.get("retention_pct") is not None:
+                retention_by_id.setdefault(vid, row["retention_pct"])
+
+    rows: list[dict[str, Any]] = []
+    for vid in new_ids:
+        info = videos_meta.get(vid, {})
+        period = views_by_id.get(vid)
+        if period is None:
+            # Fetch failed or zero-activity with no row returned.
+            views_val, minutes_val, retention = 0, 0, None
+        else:
+            views_val = int(period.get("views", 0) or 0)
+            minutes_val = int(period.get("minutes", 0) or 0)
+            retention = period.get("retention_pct", retention_by_id.get(vid))
         rows.append(
             {
                 "video_id": vid,
                 "title": info.get("title", ""),
-                "published_at": info.get("published_at", ""),
-                "duration_sec": info.get("duration_sec", 0),
-                "views": int(period.get("views", 0) or 0),
-                "minutes": int(period.get("minutes", 0) or 0),
-                "retention_pct": period.get(
-                    "retention_pct", retention_by_id.get(vid)
+                "published_at": published_at_jst_display(
+                    str(info.get("published_at_iso", "")),
+                    str(info.get("published_at", "")),
                 ),
+                "duration_sec": info.get("duration_sec", 0),
+                "views": views_val,
+                "minutes": minutes_val,
+                "retention_pct": retention,
                 "engagement_pct": info.get("engagement_pct"),
             }
         )

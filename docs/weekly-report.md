@@ -46,7 +46,8 @@ GitHub Actions（週次 cron / 手動 workflow_dispatch）
 
 - **レポートの週ラベル・対象週**は JST の ISO 週（月〜日）。
 - **YouTube Analytics API** の `startDate` / `endDate` は **Pacific Time（America/Los_Angeles）** で解釈される。実装では JST 週の `[月 00:00, 日 23:59:59]` を PT カレンダー日へ変換してからクエリする（`app.report.weeks.jst_range_to_analytics_dates`）。日付粒度のため、週境界付近では PT 側に数時間ぶんのはみ出しがあり得る。
-- **新規公開の当週判定**は Data API の `publishedAt`（UTC 瞬間）を JST 日付に変換してから行う（UTC 日付の切り出しでは境界を誤る）。
+- **新規公開の当週判定と表の公開日表示**は Data API の `publishedAt`（UTC 瞬間）を JST 日付に変換して行う（UTC 日付の切り出しでは境界を誤る）。
+- **新規公開の初動指標**は当週 `top_videos` に無い動画（Top50 外）でも `video_period_metrics` で個別取得する。
 
 ---
 

@@ -245,6 +245,54 @@ class YouTubeAnalyticsClient:
             ),
         }
 
+    def video_period_metrics(
+        self,
+        video_ids: list[str],
+        *,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        """Per-video views / watch-time / retention for an explicit date window.
+
+        Used for weekly "new video" rows that may fall outside ``top_videos``
+        (maxResults=50). IDs are queried in chunks with ``filters=video==…``.
+        """
+        if not video_ids:
+            return []
+        # Analytics accepts a comma-separated video filter; keep chunks modest.
+        chunk_size = 50
+        result: list[dict[str, Any]] = []
+        for i in range(0, len(video_ids), chunk_size):
+            chunk = video_ids[i : i + chunk_size]
+            resp = self._query(
+                startDate=start_date,
+                endDate=end_date,
+                metrics=(
+                    "views,estimatedMinutesWatched,"
+                    "averageViewDuration,averageViewPercentage"
+                ),
+                dimensions="video",
+                filters=f"video=={','.join(chunk)}",
+                maxResults=len(chunk),
+            )
+            headers = [h["name"] for h in resp.get("columnHeaders", [])]
+            for row in resp.get("rows") or []:
+                rec = dict(zip(headers, row))
+                result.append(
+                    {
+                        "video_id": rec.get("video", ""),
+                        "views": int(rec.get("views", 0) or 0),
+                        "minutes": int(rec.get("estimatedMinutesWatched", 0) or 0),
+                        "avg_view_sec": round(
+                            float(rec.get("averageViewDuration", 0) or 0), 1
+                        ),
+                        "retention_pct": round(
+                            float(rec.get("averageViewPercentage", 0) or 0), 1
+                        ),
+                    }
+                )
+        return result
+
     def compare(
         self, video_ids: list[str], metric: str, days: int
     ) -> list[dict[str, Any]]:

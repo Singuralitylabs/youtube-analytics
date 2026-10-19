@@ -84,6 +84,17 @@ def published_instant_to_jst_date(value: str) -> date | None:
         return None
 
 
+def published_at_jst_display(
+    published_at_iso: str = "", published_at: str = ""
+) -> str:
+    """YYYY-MM-DD in JST for table display (falls back to the UTC date stem)."""
+    raw = published_at_iso or published_at
+    day = published_instant_to_jst_date(str(raw))
+    if day is not None:
+        return day.isoformat()
+    return (published_at or raw or "")[:10]
+
+
 def load_prior_weekly_report(output_dir: str, current_week: str) -> str | None:
     """Return text of the latest weekly report strictly before ``current_week``.
 
