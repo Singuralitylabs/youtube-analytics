@@ -131,3 +131,42 @@ def is_most_recent_completed_week(week_end: date, today: date | None = None) -> 
         today = datetime.now(_JST).date()
     latest_sunday = today - timedelta(days=today.isoweekday())
     return week_end == latest_sunday
+
+
+# YouTube Analytics typically finalizes within 48–72 hours.
+_ANALYTICS_FINALIZATION_LAG_DAYS = 3
+# YouTube Analytics API trailing window (same as monthly builder).
+_ANALYTICS_MAX_LOOKBACK_DAYS = 90
+
+
+def analytics_may_include_unfinalized(
+    week_end: date, today: date | None = None
+) -> bool:
+    """True when ``week_end`` is recent enough that Analytics may still be soft."""
+    if today is None:
+        today = datetime.now(_JST).date()
+    if week_end > today:
+        return True
+    return (today - week_end).days <= _ANALYTICS_FINALIZATION_LAG_DAYS
+
+
+def validate_report_week(
+    week_start: date,
+    week_end: date,
+    *,
+    today: date | None = None,
+) -> None:
+    """Raise ``ValueError`` when ``--week`` is unfinished, future, or too old."""
+    if today is None:
+        today = datetime.now(_JST).date()
+    if week_end >= today:
+        raise ValueError(
+            f"まだ終わっていない週、または未来の週は指定できません"
+            f"（{week_start}〜{week_end}、今日={today}）"
+        )
+    age_days = (today - week_end).days
+    if age_days > _ANALYTICS_MAX_LOOKBACK_DAYS:
+        raise ValueError(
+            f"Analytics 取得可能期間（直近{_ANALYTICS_MAX_LOOKBACK_DAYS}日）より古い週です"
+            f"（週末日={week_end}、経過={age_days}日）"
+        )

@@ -341,14 +341,23 @@ def _render_weekly_rankings(bundle: dict[str, Any]) -> str:
 
 
 def _rank_change(row: dict[str, Any]) -> str:
+    """Format prior-rank cell: NEW / 圏外 / — / N（±delta）."""
+    status = row.get("prior_status")
     prior = row.get("prior_rank")
     delta = row.get("rank_delta")
-    if prior is None:
+    if status == "new":
         return "NEW"
-    if delta is None or delta == 0:
-        return f"{prior}（→）"
-    sign = "+" if delta > 0 else ""
-    return f"{prior}（{sign}{delta}）"
+    if status == "out":
+        return "圏外"
+    if status == "unavailable":
+        return "—"
+    if prior is not None:
+        if delta is None or delta == 0:
+            return f"{prior}（→）"
+        sign = "+" if delta > 0 else ""
+        return f"{prior}（{sign}{delta}）"
+    # Legacy rows without prior_status.
+    return "圏外"
 
 
 def _render_new_videos(bundle: dict[str, Any]) -> str:

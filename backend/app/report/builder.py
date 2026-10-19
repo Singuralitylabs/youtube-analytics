@@ -38,6 +38,7 @@ from app.report.retry import (
     with_retry,
 )
 from app.report.weeks import (
+    analytics_may_include_unfinalized,
     is_most_recent_completed_week,
     jst_range_to_analytics_dates,
     published_at_jst_display,
@@ -277,14 +278,18 @@ def _apply_mom_delta(
 
     sub_now = snapshot["subscriber_count"]
     view_now = snapshot["total_view_count"]
+    # Empty / failed channel stats → avoid bogus deltas like ``0 - baseline``.
+    if not sub_now and not view_now:
+        return
+
     sub_base = int(base_rec.get("subscriber_count", 0))
     view_base = int(base_rec.get("total_view_count", 0))
 
     snapshot["delta_baseline_date"] = base_date.isoformat()
-    if sub_base:
+    if sub_base and sub_now:
         snapshot["subscriber_delta"] = sub_now - sub_base
         snapshot["subscriber_delta_pct"] = _pct(sub_now - sub_base, sub_base)
-    if view_base:
+    if view_base and view_now:
         snapshot["total_view_delta"] = view_now - view_base
         snapshot["total_view_delta_pct"] = _pct(view_now - view_base, view_base)
 
@@ -657,7 +662,9 @@ def build_weekly_bundle(
             "analytics_end": api_end,
             "analytics_prior_start": api_prior_start,
             "analytics_prior_end": api_prior_end,
-            "analytics_may_include_unfinalized": True,
+            "analytics_may_include_unfinalized": analytics_may_include_unfinalized(
+                week_end, today
+            ),
             "generated_at": today.isoformat(),
         },
         "snapshot": {},
@@ -727,6 +734,8 @@ def build_weekly_bundle(
         r["video_id"]: idx for idx, r in enumerate(minutes_prior, start=1)
     }
 
+    prior_views_available = bool(views_prior)
+    prior_minutes_available = bool(minutes_prior)
     bundle["rankings"]["views"] = _hydrate_weekly_ranking(
         views_now,
         videos_meta,
@@ -734,6 +743,9 @@ def build_weekly_bundle(
         prior_rank_by_id=prior_views_rank,
         value_key="views",
         top_n=_WEEKLY_TOP_N,
+        week_start=week_start,
+        week_end=week_end,
+        prior_available=prior_views_available,
     )
     bundle["rankings"]["minutes"] = _hydrate_weekly_ranking(
         minutes_now,
@@ -742,6 +754,9 @@ def build_weekly_bundle(
         prior_rank_by_id=prior_minutes_rank,
         value_key="minutes",
         top_n=_WEEKLY_TOP_N,
+        week_start=week_start,
+        week_end=week_end,
+        prior_available=prior_minutes_available,
     )
 
     period_now = _safe_channel_totals(api_start, api_end, bundle)
@@ -904,6 +919,27 @@ def _period_with_wow(
     }
 
 
+def _prior_rank_status(
+    info: dict[str, Any],
+    prior_rank: int | None,
+    *,
+    week_start: date,
+    week_end: date,
+    prior_available: bool,
+) -> str:
+    """Classify prior-rank cell: ranked / new / out / unavailable."""
+    if prior_rank is not None:
+        return "ranked"
+    pub = published_instant_to_jst_date(
+        str(info.get("published_at_iso") or info.get("published_at") or "")
+    )
+    if pub is not None and week_start <= pub <= week_end:
+        return "new"
+    if not prior_available:
+        return "unavailable"
+    return "out"
+
+
 def _hydrate_weekly_ranking(
     rows: list[dict[str, Any]],
     videos_meta: dict[str, Any],
@@ -912,6 +948,9 @@ def _hydrate_weekly_ranking(
     prior_rank_by_id: dict[str, int],
     value_key: str,
     top_n: int,
+    week_start: date | None = None,
+    week_end: date | None = None,
+    prior_available: bool = True,
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for idx, r in enumerate(rows[:top_n], start=1):
@@ -919,10 +958,21 @@ def _hydrate_weekly_ranking(
         info = videos_meta.get(vid, {})
         prior_rank = prior_rank_by_id.get(vid)
         rank_delta = (prior_rank - idx) if prior_rank is not None else None
+        if week_start is not None and week_end is not None:
+            prior_status = _prior_rank_status(
+                info,
+                prior_rank,
+                week_start=week_start,
+                week_end=week_end,
+                prior_available=prior_available,
+            )
+        else:
+            prior_status = "ranked" if prior_rank is not None else "out"
         result.append(
             {
                 "rank": idx,
                 "prior_rank": prior_rank,
+                "prior_status": prior_status,
                 "rank_delta": rank_delta,
                 "video_id": vid,
                 "title": info.get("title", ""),

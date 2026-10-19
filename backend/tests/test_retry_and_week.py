@@ -21,6 +21,7 @@ from app.report.retry import (  # noqa: E402
     with_retry,
 )
 from app.report.weeks import (  # noqa: E402
+    analytics_may_include_unfinalized,
     is_most_recent_completed_week,
     jst_range_to_analytics_dates,
     load_prior_weekly_report,
@@ -29,6 +30,7 @@ from app.report.weeks import (  # noqa: E402
     published_at_jst_display,
     published_instant_to_jst_date,
     should_skip_scheduled_weekly,
+    validate_report_week,
 )
 
 
@@ -119,6 +121,23 @@ class WeekHelpersTest(unittest.TestCase):
             is_most_recent_completed_week(date(2026, 7, 12), date(2026, 10, 19))
         )
 
+    def test_analytics_may_include_unfinalized_only_when_recent(self) -> None:
+        self.assertTrue(
+            analytics_may_include_unfinalized(date(2026, 10, 18), date(2026, 10, 21))
+        )
+        self.assertFalse(
+            analytics_may_include_unfinalized(date(2026, 7, 12), date(2026, 10, 19))
+        )
+
+    def test_validate_report_week_rejects_future_and_too_old(self) -> None:
+        today = date(2026, 10, 19)
+        with self.assertRaises(ValueError):
+            validate_report_week(date(2026, 10, 19), date(2026, 10, 25), today=today)
+        with self.assertRaises(ValueError):
+            validate_report_week(date(2026, 6, 1), date(2026, 6, 7), today=today)
+        # Just-completed previous week is OK.
+        validate_report_week(date(2026, 10, 12), date(2026, 10, 18), today=today)
+
 
 class RetryTest(unittest.TestCase):
     def test_retryable_gemini_503(self) -> None:
@@ -197,24 +216,58 @@ class BuilderWeeklyLogicTest(unittest.TestCase):
         rows = [
             {"video_id": "a", "views": 100, "retention_pct": 40.0},
             {"video_id": "b", "views": 80, "retention_pct": 30.0},
+            {"video_id": "c", "views": 70, "retention_pct": 20.0},
         ]
         meta = {
-            "a": {"title": "A", "published_at": "2026-01-01", "engagement_pct": 1.0},
-            "b": {"title": "B", "published_at": "2026-01-02", "engagement_pct": 2.0},
+            "a": {
+                "title": "A",
+                "published_at": "2026-01-01",
+                "published_at_iso": "2026-01-01T00:00:00Z",
+                "engagement_pct": 1.0,
+            },
+            "b": {
+                "title": "B",
+                "published_at": "2026-10-06",
+                "published_at_iso": "2026-10-06T03:00:00Z",  # in-week → NEW
+                "engagement_pct": 2.0,
+            },
+            "c": {
+                "title": "C",
+                "published_at": "2026-01-02",
+                "published_at_iso": "2026-01-02T00:00:00Z",  # old, not in prior → 圏外
+                "engagement_pct": 1.5,
+            },
         }
         out = builder._hydrate_weekly_ranking(
             rows,
             meta,
             {},
-            prior_rank_by_id={"a": 3},  # b is NEW
+            prior_rank_by_id={"a": 3},
             value_key="views",
             top_n=5,
+            week_start=date(2026, 10, 5),
+            week_end=date(2026, 10, 11),
+            prior_available=True,
         )
-        self.assertEqual(out[0]["rank"], 1)
-        self.assertEqual(out[0]["prior_rank"], 3)
-        self.assertEqual(out[0]["rank_delta"], 2)  # rose
-        self.assertIsNone(out[1]["prior_rank"])
-        self.assertIsNone(out[1]["rank_delta"])
+        self.assertEqual(out[0]["prior_status"], "ranked")
+        self.assertEqual(out[0]["rank_delta"], 2)
+        self.assertEqual(out[1]["prior_status"], "new")
+        self.assertEqual(out[2]["prior_status"], "out")
+        self.assertEqual(renderer._rank_change(out[1]), "NEW")
+        self.assertEqual(renderer._rank_change(out[2]), "圏外")
+        unavailable = builder._hydrate_weekly_ranking(
+            rows[:1],
+            meta,
+            {},
+            prior_rank_by_id={},
+            value_key="views",
+            top_n=5,
+            week_start=date(2026, 10, 5),
+            week_end=date(2026, 10, 11),
+            prior_available=False,
+        )
+        self.assertEqual(unavailable[0]["prior_status"], "unavailable")
+        self.assertEqual(renderer._rank_change(unavailable[0]), "—")
 
     def test_new_videos_in_week_uses_jst_instant(self) -> None:
         week_start, week_end = date(2026, 10, 5), date(2026, 10, 11)
@@ -441,7 +494,8 @@ class BuilderWeeklyLogicTest(unittest.TestCase):
 
         self.assertEqual(bundle["meta"]["analytics_start"], "2026-10-05")
         self.assertEqual(bundle["meta"]["analytics_end"], "2026-10-11")
-        self.assertTrue(bundle["meta"]["analytics_may_include_unfinalized"])
+        # Flag depends on run date vs week_end; historical regenerations stay False.
+        self.assertIn("analytics_may_include_unfinalized", bundle["meta"])
         self.assertEqual(bundle["period"]["views"], 300)
         self.assertEqual(bundle["period"]["views_delta"], 100)
         views_rank = bundle["rankings"]["views"]
@@ -449,6 +503,27 @@ class BuilderWeeklyLogicTest(unittest.TestCase):
         self.assertEqual(views_rank[0]["prior_rank"], 2)
         self.assertEqual(views_rank[0]["rank_delta"], 1)
         self.assertEqual([v["video_id"] for v in bundle["new_videos"]], ["v2"])
+
+    def test_apply_mom_delta_skips_empty_stats(self) -> None:
+        snapshot = {
+            "subscriber_count": 0,
+            "total_view_count": 0,
+            "subscriber_delta": None,
+            "subscriber_delta_pct": None,
+            "total_view_delta": None,
+            "total_view_delta_pct": None,
+            "delta_baseline_date": None,
+        }
+        history = [
+            {
+                "collected_at": "2026-09-01 00:00:00",
+                "subscriber_count": 1000,
+                "total_view_count": 50000,
+            }
+        ]
+        builder._apply_mom_delta(snapshot, history, date(2026, 10, 1))
+        self.assertIsNone(snapshot["subscriber_delta"])
+        self.assertIsNone(snapshot["delta_baseline_date"])
 
     def test_apply_wow_delta_skips_historical_week(self) -> None:
         snapshot = {
@@ -484,6 +559,30 @@ class BuilderWeeklyLogicTest(unittest.TestCase):
             meta = builder._build_videos_meta("UCtest", bundle)
         self.assertEqual(meta, {})
         self.assertTrue(any("dns fail" in w for w in bundle["warnings"]))
+
+
+class CommitScriptOrderTest(unittest.TestCase):
+    def test_commit_script_orders_add_before_pull(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        script = (root / ".github" / "scripts" / "commit-weekly-report.sh").read_text(
+            encoding="utf-8"
+        )
+        # コメント行を除き、実コマンド行の出現順だけを検証する
+        commands = [
+            line.strip()
+            for line in script.splitlines()
+            if line.strip().startswith("git ")
+        ]
+        add_at = next(i for i, c in enumerate(commands) if c.startswith("git add "))
+        commit_at = next(i for i, c in enumerate(commands) if c.startswith("git commit "))
+        pull_at = next(
+            i for i, c in enumerate(commands) if c.startswith("git pull --rebase ")
+        )
+        push_at = next(i for i, c in enumerate(commands) if c.startswith("git push "))
+        self.assertLess(add_at, commit_at)
+        self.assertLess(commit_at, pull_at)
+        self.assertLess(pull_at, push_at)
+        self.assertIn("Order (do not rearrange)", script)
 
 
 class VideoPeriodMetricsTest(unittest.TestCase):

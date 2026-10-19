@@ -41,6 +41,7 @@ from app.report.weeks import (  # noqa: E402
     load_prior_weekly_report,
     parse_iso_week,
     previous_iso_week,
+    validate_report_week,
 )
 from config.settings import get_settings  # noqa: E402
 
@@ -137,6 +138,13 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     else:
         week, week_start, week_end = previous_iso_week()
+
+    if not args.notify_only:
+        try:
+            validate_report_week(week_start, week_end)
+        except ValueError as err:
+            _err(str(err))
+            return 2
 
     output_dir = _resolve_output_dir(args.out)
 
