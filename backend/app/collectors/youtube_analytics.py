@@ -146,7 +146,13 @@ class YouTubeAnalyticsClient:
         ]
 
     def top_videos(
-        self, days: int, limit: int = 50, sort: str = "-views"
+        self,
+        days: int,
+        limit: int = 50,
+        sort: str = "-views",
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> list[dict[str, Any]]:
         """Top videos with views, watch-time, avg duration AND retention in one call.
 
@@ -155,8 +161,15 @@ class YouTubeAnalyticsClient:
         along as columns rather than being the sort key (sorting by those metrics
         with ``dimensions=video`` returns 400/500). ``sort`` must be a supported
         key such as ``-views`` or ``-estimatedMinutesWatched``.
+
+        Pass ``start_date`` / ``end_date`` (YYYY-MM-DD) to query an arbitrary
+        window; when omitted the trailing ``days`` window is used (unchanged
+        default for existing callers).
         """
-        start, end = _date_range(days)
+        if start_date and end_date:
+            start, end = start_date, end_date
+        else:
+            start, end = _date_range(days)
         resp = self._query(
             startDate=start,
             endDate=end,
@@ -185,6 +198,47 @@ class YouTubeAnalyticsClient:
                 }
             )
         return result
+
+    def channel_totals(
+        self,
+        *,
+        days: int | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Channel-level totals for a trailing or explicit date window."""
+        if start_date and end_date:
+            start, end = start_date, end_date
+        elif days is not None:
+            start, end = _date_range(days)
+        else:
+            raise ValueError("days または start_date/end_date を指定してください")
+        resp = self._query(
+            startDate=start,
+            endDate=end,
+            metrics=(
+                "views,estimatedMinutesWatched,"
+                "averageViewDuration,averageViewPercentage"
+            ),
+        )
+        headers = [h["name"] for h in resp.get("columnHeaders", [])]
+        rows = resp.get("rows") or []
+        if not rows:
+            return {
+                "views": 0,
+                "minutes": 0,
+                "avg_view_sec": 0.0,
+                "retention_pct": 0.0,
+            }
+        rec = dict(zip(headers, rows[0]))
+        return {
+            "views": int(rec.get("views", 0) or 0),
+            "minutes": int(rec.get("estimatedMinutesWatched", 0) or 0),
+            "avg_view_sec": round(float(rec.get("averageViewDuration", 0) or 0), 1),
+            "retention_pct": round(
+                float(rec.get("averageViewPercentage", 0) or 0), 1
+            ),
+        }
 
     def compare(
         self, video_ids: list[str], metric: str, days: int

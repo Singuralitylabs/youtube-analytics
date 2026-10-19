@@ -195,10 +195,170 @@ def _clean(title: Any) -> str:
     return str(title or "").replace("|", "\\|").strip()
 
 
-def write_report(markdown: str, output_dir: str, month: str) -> str:
-    """Write the report to ``{output_dir}/{month}.md`` and return its path."""
+def write_report(markdown: str, output_dir: str, label: str) -> str:
+    """Write the report to ``{output_dir}/{label}.md`` and return its path.
+
+    ``label`` is ``YYYY-MM`` for monthly reports or ``YYYY-Www`` for weekly.
+    """
     os.makedirs(output_dir, exist_ok=True)
-    path = os.path.join(output_dir, f"{month}.md")
+    path = os.path.join(output_dir, f"{label}.md")
     with open(path, "w", encoding="utf-8") as fp:
         fp.write(markdown)
     return path
+
+
+def render_weekly_report(bundle: dict[str, Any], sections: dict[str, str]) -> str:
+    """Assemble the lighter weekly report Markdown."""
+    meta = bundle.get("meta", {})
+    parts: list[str] = []
+
+    title = meta.get("channel_title") or meta.get("channel_id", "")
+    parts.append(f"# 週次インサイト {meta.get('week', '')}")
+    parts.append("")
+    parts.append(f"> 分析対象: {title}（{meta.get('channel_id', '')}）")
+    parts.append(
+        f"> 集計期間: {meta.get('week_start', '')} 〜 {meta.get('week_end', '')}"
+        f"（前週比対象: {meta.get('prior_week_start', '')} 〜 "
+        f"{meta.get('prior_week_end', '')}）"
+    )
+    parts.append(f"> 分析実行日: {meta.get('generated_at', '')}")
+    if bundle.get("warnings"):
+        parts.append(
+            f"> 注: データ取得時に {len(bundle['warnings'])} 件の警告あり"
+            "（末尾「データ取得メモ」参照）"
+        )
+    if bundle.get("author_failed"):
+        parts.append("> 注: 解釈生成に失敗したため数値のみのレポートです")
+    parts.append("")
+    parts.append("---")
+    parts.append("")
+
+    parts.append(_render_weekly_snapshot(bundle))
+    parts.append(_section("1. 今週の最重要ポイント", sections.get("key_finding", "")))
+    parts.append(_render_weekly_rankings(bundle))
+    parts.append(_render_new_videos(bundle))
+    parts.append(_section("4. 来週のアクション", sections.get("next_actions", "")))
+    parts.append(
+        _section("5. 先週アクションの検証", sections.get("prior_validation", ""))
+    )
+
+    if bundle.get("warnings"):
+        parts.append(_render_warnings(bundle["warnings"]))
+
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def _render_weekly_snapshot(bundle: dict[str, Any]) -> str:
+    s = bundle.get("snapshot", {})
+    p = bundle.get("period", {})
+    lines = [
+        "## 0. 週次スナップショット",
+        "",
+        "| 指標 | 値 | 前週比 |",
+        "|---|---:|---:|",
+        f"| 登録者数 | {_num(s.get('subscriber_count'))} | "
+        f"{_delta(s.get('subscriber_delta'), s.get('subscriber_delta_pct'))} |",
+        f"| 総再生数（累計） | {_num(s.get('total_view_count'))} | "
+        f"{_delta(s.get('total_view_delta'), s.get('total_view_delta_pct'))} |",
+        f"| 当週の再生数 | {_num(p.get('views'))} | "
+        f"{_delta(p.get('views_delta'), p.get('views_delta_pct'))} |",
+        f"| 当週の総視聴時間（分） | {_num(p.get('minutes'))} | "
+        f"{_delta(p.get('minutes_delta'), p.get('minutes_delta_pct'))} |",
+        f"| 当週の平均維持率 | {_pct(p.get('retention_pct'))} | "
+        f"{_pp_delta(p.get('retention_delta_pp'))} |",
+    ]
+    if s.get("delta_baseline_date"):
+        lines.append("")
+        lines.append(
+            f"> 登録者・総再生の前週比基準日: {s['delta_baseline_date']}"
+            "（Sheets スナップショット）"
+        )
+    else:
+        lines.append("")
+        lines.append(
+            "> 登録者・総再生の前週比: Sheets 履歴が不足のため未算出"
+            "（`POST /api/collect` の継続記録が前提）"
+        )
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _pp_delta(value: Any) -> str:
+    """Format a percentage-point delta (retention WoW)."""
+    if value is None:
+        return "—"
+    try:
+        num = float(value)
+    except (ValueError, TypeError):
+        return "—"
+    sign = "+" if num >= 0 else ""
+    return f"{sign}{num:.1f}pp"
+
+
+def _render_weekly_rankings(bundle: dict[str, Any]) -> str:
+    rk = bundle.get("rankings", {})
+    out = ["## 2. 当週ランキング", ""]
+
+    out.append("### 再生数 Top5")
+    out.append("")
+    out.append("| # | 前週 | 再生 | 維持率 | エンゲ% | 公開日 | タイトル |")
+    out.append("|---|---|---:|---:|---:|---|---|")
+    for r in rk.get("views", [])[:5]:
+        out.append(
+            f"| {r['rank']} | {_rank_change(r)} | {_num(r.get('views'))} | "
+            f"{_pct(r.get('retention_pct'))} | {_pct(r.get('engagement_pct'), 2)} | "
+            f"{r.get('published_at', '')} | {_clean(r.get('title'))} |"
+        )
+    out.append("")
+
+    out.append("### 視聴時間 Top5")
+    out.append("")
+    out.append("| # | 前週 | 視聴分 | 維持率 | 公開日 | タイトル |")
+    out.append("|---|---|---:|---:|---|---|")
+    for r in rk.get("minutes", [])[:5]:
+        out.append(
+            f"| {r['rank']} | {_rank_change(r)} | {_num(r.get('minutes'))} | "
+            f"{_pct(r.get('retention_pct'))} | {r.get('published_at', '')} | "
+            f"{_clean(r.get('title'))} |"
+        )
+    out.append("")
+    out.append("---")
+    out.append("")
+    return "\n".join(out)
+
+
+def _rank_change(row: dict[str, Any]) -> str:
+    prior = row.get("prior_rank")
+    delta = row.get("rank_delta")
+    if prior is None:
+        return "NEW"
+    if delta is None or delta == 0:
+        return f"{prior}（→）"
+    sign = "+" if delta > 0 else ""
+    return f"{prior}（{sign}{delta}）"
+
+
+def _render_new_videos(bundle: dict[str, Any]) -> str:
+    rows = bundle.get("new_videos") or []
+    out = ["## 3. 新規公開動画の初動", ""]
+    if not rows:
+        out.append("_当週に公開された動画はありません。_")
+        out.append("")
+        out.append("---")
+        out.append("")
+        return "\n".join(out)
+
+    out.append("| 公開日 | 再生 | 維持率 | エンゲ% | タイトル |")
+    out.append("|---|---:|---:|---:|---|")
+    for r in rows:
+        out.append(
+            f"| {r.get('published_at', '')} | {_num(r.get('views'))} | "
+            f"{_pct(r.get('retention_pct'))} | {_pct(r.get('engagement_pct'), 2)} | "
+            f"{_clean(r.get('title'))} |"
+        )
+    out.append("")
+    out.append("---")
+    out.append("")
+    return "\n".join(out)

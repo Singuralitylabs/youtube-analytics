@@ -31,6 +31,13 @@ from app.collectors.youtube_analytics import HttpError as AnalyticsHttpError
 from app.collectors.youtube_analytics import youtube_analytics_client
 from app.collectors.youtube_data import HttpError as DataHttpError
 from app.collectors.youtube_data import youtube_data_client
+from app.report.retry import (
+    API_BACKOFF_BASE_S,
+    API_BACKOFF_FACTOR,
+    API_MAX_ATTEMPTS,
+    is_retryable_api_error,
+    with_retry,
+)
 from config.settings import get_settings
 
 # OAuth-backed calls (Analytics, Sheets) can fail on HTTP errors *or* on
@@ -41,15 +48,34 @@ _OAUTH_ERRORS = (AnalyticsHttpError, GoogleAuthError, FileNotFoundError)
 
 # How many videos to pull per ranking call (covers Top10 tables + split matrix).
 _RANKING_LIMIT = 50
+# Weekly Top-N tables (lighter than the monthly Top10).
+_WEEKLY_TOP_N = 5
 # Videos considered "well exposed" enough to trust their retention figure.
 _EXPOSURE_POOL = 20
 # Default trailing analysis window (YouTube Analytics API maximum).
 _WINDOW_DAYS = 90
+# Below these baselines, WoW *rates* are omitted (absolute delta only) to avoid
+# explosive percentages on quiet weeks / thin history.
+_MIN_VIEWS_FOR_PCT = 50
+_MIN_SUBS_FOR_PCT = 10
+_MIN_MINUTES_FOR_PCT = 30
 
 
 def _log(message: str) -> None:
     """Emit progress/diagnostics to stderr so stdout stays machine-parseable."""
     print(f"[builder] {message}", file=sys.stderr)
+
+
+def _call_api(label: str, fn: Any) -> Any:
+    """Invoke an API callable with short retry on transient failures."""
+    return with_retry(
+        fn,
+        max_attempts=API_MAX_ATTEMPTS,
+        base_delay_s=API_BACKOFF_BASE_S,
+        factor=API_BACKOFF_FACTOR,
+        label=label,
+        is_retryable=is_retryable_api_error,
+    )
 
 
 def _pct(numerator: float, denominator: float) -> float | None:
@@ -109,14 +135,18 @@ def build_data_bundle(
 
     # ---- Channel snapshot + title -------------------------------------------
     try:
-        bundle["meta"]["channel_title"] = youtube_data_client.get_channel_title(
-            channel_id
+        bundle["meta"]["channel_title"] = _call_api(
+            "channel_title",
+            lambda: youtube_data_client.get_channel_title(channel_id),
         )
     except (DataHttpError, LookupError) as err:
         bundle["warnings"].append(f"channel title 取得失敗: {err}")
 
     try:
-        stats = youtube_data_client.get_channel_stats(channel_id)
+        stats = _call_api(
+            "channel_stats",
+            lambda: youtube_data_client.get_channel_stats(channel_id),
+        )
     except (DataHttpError, LookupError) as err:
         bundle["warnings"].append(f"channel stats 取得失敗: {err}")
         stats = {}
@@ -201,7 +231,7 @@ def _avg_views_per_video(
 
 def _safe_read_history(bundle: dict[str, Any]) -> list[dict[str, Any]]:
     try:
-        return sheets_client.read_history()
+        return _call_api("sheets.read_history", sheets_client.read_history)
     except (SheetsHttpError, FileNotFoundError) as err:
         bundle["warnings"].append(f"Sheets 履歴の読み取り失敗: {err}")
         return []
@@ -261,8 +291,14 @@ def _build_videos_meta(
     channel_id: str, bundle: dict[str, Any]
 ) -> dict[str, dict[str, Any]]:
     try:
-        video_ids = youtube_data_client.list_video_ids(channel_id)
-        videos = youtube_data_client.get_videos(video_ids)
+        video_ids = _call_api(
+            "list_video_ids",
+            lambda: youtube_data_client.list_video_ids(channel_id),
+        )
+        videos = _call_api(
+            "get_videos",
+            lambda: youtube_data_client.get_videos(video_ids),
+        )
     except (DataHttpError, LookupError) as err:
         bundle["warnings"].append(f"動画一覧の取得失敗: {err}")
         return {}
@@ -279,12 +315,34 @@ def _build_videos_meta(
 
 
 def _safe_top_videos(
-    days: int, sort: str, bundle: dict[str, Any]
+    days: int,
+    sort: str,
+    bundle: dict[str, Any],
+    *,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = _RANKING_LIMIT,
 ) -> list[dict[str, Any]]:
     try:
-        return youtube_analytics_client.top_videos(days, _RANKING_LIMIT, sort)
+        return _call_api(
+            f"top_videos(sort={sort})",
+            lambda: youtube_analytics_client.top_videos(
+                days,
+                limit,
+                sort,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+        )
     except _OAUTH_ERRORS as err:
-        bundle["warnings"].append(f"top_videos(sort={sort}) 取得失敗: {err}")
+        window = (
+            f"{start_date}..{end_date}"
+            if start_date and end_date
+            else f"days={days}"
+        )
+        bundle["warnings"].append(
+            f"top_videos(sort={sort}, {window}) 取得失敗: {err}"
+        )
         return []
 
 
@@ -500,7 +558,10 @@ def _build_drilldown(
     }
 
     try:
-        traffic = youtube_analytics_client.traffic_sources(video_id, days)
+        traffic = _call_api(
+            f"traffic({video_id})",
+            lambda: youtube_analytics_client.traffic_sources(video_id, days),
+        )
         total = sum(t["views"] for t in traffic) or 1
         detail["traffic"] = [
             {**t, "share_pct": round(t["views"] / total * 100, 1)}
@@ -510,24 +571,29 @@ def _build_drilldown(
         bundle["warnings"].append(f"traffic({video_id}) 取得失敗: {err}")
 
     try:
-        detail["demographics"] = youtube_analytics_client.demographics(
-            video_id, days
+        detail["demographics"] = _call_api(
+            f"demographics({video_id})",
+            lambda: youtube_analytics_client.demographics(video_id, days),
         )
     except _OAUTH_ERRORS as err:
         bundle["warnings"].append(f"demographics({video_id}) 取得失敗: {err}")
 
     try:
-        detail["timeseries_views"] = youtube_analytics_client.video_timeseries(
-            video_id, "views", days
+        detail["timeseries_views"] = _call_api(
+            f"timeseries views({video_id})",
+            lambda: youtube_analytics_client.video_timeseries(
+                video_id, "views", days
+            ),
         )
     except _OAUTH_ERRORS as err:
         bundle["warnings"].append(f"timeseries views({video_id}) 取得失敗: {err}")
 
     try:
-        detail["timeseries_retention"] = (
-            youtube_analytics_client.video_timeseries(
+        detail["timeseries_retention"] = _call_api(
+            f"timeseries retention({video_id})",
+            lambda: youtube_analytics_client.video_timeseries(
                 video_id, "averageViewPercentage", days
-            )
+            ),
         )
     except _OAUTH_ERRORS as err:
         bundle["warnings"].append(
@@ -535,3 +601,314 @@ def _build_drilldown(
         )
 
     return detail
+
+
+# --------------------------------------------------------------------------- #
+# Weekly report bundle
+# --------------------------------------------------------------------------- #
+def build_weekly_bundle(
+    week_start: date,
+    week_end: date,
+    *,
+    week_label: str | None = None,
+) -> dict[str, Any]:
+    """Gather deterministic numbers for one ISO week (Mon–Sun) plus WoW deltas.
+
+    Args:
+        week_start: Monday of the target week (inclusive).
+        week_end: Sunday of the target week (inclusive).
+        week_label: ``YYYY-Www`` label (defaults from ``week_start`` isocalendar).
+
+    Returns:
+        A JSON-serialisable weekly bundle. Failures degrade per-section.
+    """
+    settings = get_settings()
+    channel_id = settings.CHANNEL_ID
+    today = date.today()
+    iso_year, iso_week, _ = week_start.isocalendar()
+    label = week_label or f"{iso_year}-W{iso_week:02d}"
+
+    prior_start = week_start - timedelta(days=7)
+    prior_end = week_end - timedelta(days=7)
+    start_s, end_s = week_start.isoformat(), week_end.isoformat()
+    prior_start_s, prior_end_s = prior_start.isoformat(), prior_end.isoformat()
+
+    bundle: dict[str, Any] = {
+        "meta": {
+            "week": label,
+            "channel_id": channel_id,
+            "channel_title": "",
+            "week_start": start_s,
+            "week_end": end_s,
+            "prior_week_start": prior_start_s,
+            "prior_week_end": prior_end_s,
+            "generated_at": today.isoformat(),
+        },
+        "snapshot": {},
+        "period": {},
+        "subscriber_history": [],
+        "rankings": {"views": [], "minutes": []},
+        "new_videos": [],
+        "warnings": [],
+    }
+
+    try:
+        bundle["meta"]["channel_title"] = _call_api(
+            "channel_title",
+            lambda: youtube_data_client.get_channel_title(channel_id),
+        )
+    except (DataHttpError, LookupError) as err:
+        bundle["warnings"].append(f"channel title 取得失敗: {err}")
+
+    try:
+        stats = _call_api(
+            "channel_stats",
+            lambda: youtube_data_client.get_channel_stats(channel_id),
+        )
+    except (DataHttpError, LookupError) as err:
+        bundle["warnings"].append(f"channel stats 取得失敗: {err}")
+        stats = {}
+
+    snapshot = _build_snapshot(stats)
+    history = _safe_read_history(bundle)
+    bundle["subscriber_history"] = history
+    _apply_wow_delta(snapshot, history, week_end)
+    bundle["snapshot"] = snapshot
+
+    videos_meta = _build_videos_meta(channel_id, bundle)
+
+    # Current week + prior week rankings (multi-metric top_videos).
+    views_now = _safe_top_videos(
+        7, "-views", bundle, start_date=start_s, end_date=end_s
+    )
+    minutes_now = _safe_top_videos(
+        7, "-estimatedMinutesWatched", bundle, start_date=start_s, end_date=end_s
+    )
+    views_prior = _safe_top_videos(
+        7,
+        "-views",
+        bundle,
+        start_date=prior_start_s,
+        end_date=prior_end_s,
+    )
+    minutes_prior = _safe_top_videos(
+        7,
+        "-estimatedMinutesWatched",
+        bundle,
+        start_date=prior_start_s,
+        end_date=prior_end_s,
+    )
+
+    retention_by_id = _retention_map(views_now, minutes_now)
+    prior_views_rank = {
+        r["video_id"]: idx for idx, r in enumerate(views_prior, start=1)
+    }
+    prior_minutes_rank = {
+        r["video_id"]: idx for idx, r in enumerate(minutes_prior, start=1)
+    }
+
+    bundle["rankings"]["views"] = _hydrate_weekly_ranking(
+        views_now,
+        videos_meta,
+        retention_by_id,
+        prior_rank_by_id=prior_views_rank,
+        value_key="views",
+        top_n=_WEEKLY_TOP_N,
+    )
+    bundle["rankings"]["minutes"] = _hydrate_weekly_ranking(
+        minutes_now,
+        videos_meta,
+        retention_by_id,
+        prior_rank_by_id=prior_minutes_rank,
+        value_key="minutes",
+        top_n=_WEEKLY_TOP_N,
+    )
+
+    period_now = _safe_channel_totals(start_s, end_s, bundle)
+    period_prior = _safe_channel_totals(prior_start_s, prior_end_s, bundle)
+    bundle["period"] = _period_with_wow(period_now, period_prior)
+
+    bundle["new_videos"] = _new_videos_in_week(
+        videos_meta, week_start, week_end, views_now, retention_by_id
+    )
+
+    return bundle
+
+
+def _safe_channel_totals(
+    start_date: str, end_date: str, bundle: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        return _call_api(
+            f"channel_totals({start_date}..{end_date})",
+            lambda: youtube_analytics_client.channel_totals(
+                start_date=start_date, end_date=end_date
+            ),
+        )
+    except _OAUTH_ERRORS as err:
+        bundle["warnings"].append(
+            f"channel_totals({start_date}..{end_date}) 取得失敗: {err}"
+        )
+        return {"views": 0, "minutes": 0, "avg_view_sec": 0.0, "retention_pct": None}
+
+
+def _delta_pct(
+    current: float | int | None,
+    baseline: float | int | None,
+    *,
+    min_baseline: float,
+) -> float | None:
+    """Percentage change, or None when the baseline is too small / missing."""
+    if current is None or baseline is None:
+        return None
+    if baseline < min_baseline:
+        return None
+    return _pct(float(current) - float(baseline), float(baseline))
+
+
+def _apply_wow_delta(
+    snapshot: dict[str, Any],
+    history: list[dict[str, Any]],
+    week_end: date,
+) -> None:
+    """Fill week-over-week deltas from the Sheets row nearest to prior week end."""
+    dated = [
+        (_parse_collected_at(rec.get("collected_at", "")), rec)
+        for rec in history
+    ]
+    dated = [(d, rec) for d, rec in dated if d is not None]
+    if not dated:
+        return
+
+    target = week_end - timedelta(days=7)
+    baseline = min(dated, key=lambda item: abs((item[0] - target).days))
+    base_date, base_rec = baseline
+    # Require a meaningful gap so "today's" sheet row isn't used as baseline.
+    if abs((base_date - target).days) > 4:
+        return
+    if (week_end - base_date).days < 3:
+        return
+
+    sub_now = snapshot["subscriber_count"]
+    view_now = snapshot["total_view_count"]
+    sub_base = int(base_rec.get("subscriber_count", 0))
+    view_base = int(base_rec.get("total_view_count", 0))
+
+    snapshot["delta_baseline_date"] = base_date.isoformat()
+    if sub_base:
+        snapshot["subscriber_delta"] = sub_now - sub_base
+        snapshot["subscriber_delta_pct"] = _delta_pct(
+            sub_now, sub_base, min_baseline=_MIN_SUBS_FOR_PCT
+        )
+    if view_base:
+        snapshot["total_view_delta"] = view_now - view_base
+        snapshot["total_view_delta_pct"] = _delta_pct(
+            view_now, view_base, min_baseline=_MIN_VIEWS_FOR_PCT
+        )
+
+
+def _period_with_wow(
+    current: dict[str, Any], prior: dict[str, Any]
+) -> dict[str, Any]:
+    cur_views = int(current.get("views", 0) or 0)
+    prior_views = int(prior.get("views", 0) or 0)
+    cur_minutes = int(current.get("minutes", 0) or 0)
+    prior_minutes = int(prior.get("minutes", 0) or 0)
+    cur_ret = current.get("retention_pct")
+    prior_ret = prior.get("retention_pct")
+
+    return {
+        "views": cur_views,
+        "views_delta": cur_views - prior_views,
+        "views_delta_pct": _delta_pct(
+            cur_views, prior_views, min_baseline=_MIN_VIEWS_FOR_PCT
+        ),
+        "minutes": cur_minutes,
+        "minutes_delta": cur_minutes - prior_minutes,
+        "minutes_delta_pct": _delta_pct(
+            cur_minutes, prior_minutes, min_baseline=_MIN_MINUTES_FOR_PCT
+        ),
+        "retention_pct": cur_ret,
+        "retention_delta_pp": (
+            round(float(cur_ret) - float(prior_ret), 1)
+            if cur_ret is not None and prior_ret is not None
+            else None
+        ),
+        "prior_views": prior_views,
+        "prior_minutes": prior_minutes,
+        "prior_retention_pct": prior_ret,
+    }
+
+
+def _hydrate_weekly_ranking(
+    rows: list[dict[str, Any]],
+    videos_meta: dict[str, Any],
+    retention_by_id: dict[str, float],
+    *,
+    prior_rank_by_id: dict[str, int],
+    value_key: str,
+    top_n: int,
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for idx, r in enumerate(rows[:top_n], start=1):
+        vid = r["video_id"]
+        info = videos_meta.get(vid, {})
+        prior_rank = prior_rank_by_id.get(vid)
+        rank_delta = (prior_rank - idx) if prior_rank is not None else None
+        result.append(
+            {
+                "rank": idx,
+                "prior_rank": prior_rank,
+                "rank_delta": rank_delta,
+                "video_id": vid,
+                "title": info.get("title", ""),
+                "published_at": info.get("published_at", ""),
+                value_key: round(r.get(value_key, 0)),
+                "retention_pct": r.get("retention_pct", retention_by_id.get(vid)),
+                "engagement_pct": info.get("engagement_pct"),
+                "duration_sec": info.get("duration_sec", 0),
+            }
+        )
+    return result
+
+
+def _new_videos_in_week(
+    videos_meta: dict[str, Any],
+    week_start: date,
+    week_end: date,
+    views_rows: list[dict[str, Any]],
+    retention_by_id: dict[str, float],
+) -> list[dict[str, Any]]:
+    """Videos published during the target week, with in-week performance."""
+    views_by_id = {r["video_id"]: r for r in views_rows}
+    rows: list[dict[str, Any]] = []
+    for vid, info in videos_meta.items():
+        published = _parse_published_date(info.get("published_at", ""))
+        if published is None or published < week_start or published > week_end:
+            continue
+        period = views_by_id.get(vid, {})
+        rows.append(
+            {
+                "video_id": vid,
+                "title": info.get("title", ""),
+                "published_at": info.get("published_at", ""),
+                "duration_sec": info.get("duration_sec", 0),
+                "views": int(period.get("views", 0) or 0),
+                "minutes": int(period.get("minutes", 0) or 0),
+                "retention_pct": period.get(
+                    "retention_pct", retention_by_id.get(vid)
+                ),
+                "engagement_pct": info.get("engagement_pct"),
+            }
+        )
+    rows.sort(key=lambda x: x["views"], reverse=True)
+    return rows
+
+
+def _parse_published_date(value: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
