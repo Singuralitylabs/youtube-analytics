@@ -165,6 +165,10 @@ class YouTubeAnalyticsClient:
         Pass ``start_date`` / ``end_date`` (YYYY-MM-DD) to query an arbitrary
         window; when omitted the trailing ``days`` window is used (unchanged
         default for existing callers).
+
+        Note: YouTube Analytics interprets these calendar dates in Pacific Time
+        (America/Los_Angeles). Callers targeting a JST week should convert via
+        ``app.report.weeks.jst_range_to_analytics_dates`` first.
         """
         if start_date and end_date:
             start, end = start_date, end_date
@@ -224,11 +228,12 @@ class YouTubeAnalyticsClient:
         headers = [h["name"] for h in resp.get("columnHeaders", [])]
         rows = resp.get("rows") or []
         if not rows:
+            # Empty window: totals are zero, but retention is unknown (not 0%).
             return {
                 "views": 0,
                 "minutes": 0,
-                "avg_view_sec": 0.0,
-                "retention_pct": 0.0,
+                "avg_view_sec": None,
+                "retention_pct": None,
             }
         rec = dict(zip(headers, rows[0]))
         return {

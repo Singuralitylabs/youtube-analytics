@@ -8,6 +8,7 @@ permanent 4xx errors (auth, bad request, schema) fail immediately.
 from __future__ import annotations
 
 import random
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -25,6 +26,14 @@ GEMINI_BACKOFF_FACTOR = 3.0
 API_MAX_ATTEMPTS = 3
 API_BACKOFF_BASE_S = 1.0
 API_BACKOFF_FACTOR = 2.0
+
+# Status codes embedded in exception messages (word-boundary; avoids "5000").
+_STATUS_IN_TEXT = re.compile(r"(?<!\d)(429|500|502|503|504)(?!\d)")
+# Conservative phrase match — no ambiguous "try again".
+_GEMINI_TRANSIENT_PHRASE = re.compile(
+    r"\b(unavailable|high[\s-]?demand|resource[\s_]?exhausted)\b",
+    re.IGNORECASE,
+)
 
 
 def _log(message: str) -> None:
@@ -56,21 +65,28 @@ def is_retryable_api_error(exc: BaseException) -> bool:
     """Retry YouTube / Sheets failures that look transient."""
     if isinstance(exc, (TimeoutError, ConnectionError, BrokenPipeError)):
         return True
-    # googleapiclient / urllib style
     status = _http_status(exc)
     if status is not None:
         return is_retryable_http_status(status)
     name = type(exc).__name__
     if name in {"SSLError", "RemoteDisconnected", "ProtocolError"}:
         return True
-    # google-auth transport sometimes wraps these
-    if "timed out" in str(exc).lower() or "temporarily" in str(exc).lower():
+    text = str(exc)
+    if _STATUS_IN_TEXT.search(text):
+        return True
+    lowered = text.lower()
+    if "timed out" in lowered:
         return True
     return False
 
 
 def is_retryable_gemini_error(exc: BaseException) -> bool:
-    """Retry Gemini 503 / 429 / connection blips; skip permanent 4xx."""
+    """Retry Gemini 503 / 429 / connection blips; skip permanent 4xx.
+
+    Status attributes win. Message parsing uses word-boundary status codes and
+    a small set of known transient phrases — not substring matches like
+    ``\"500\" in text`` (which falsely matches ``5000``).
+    """
     if isinstance(exc, (TimeoutError, ConnectionError, BrokenPipeError)):
         return True
     status = _http_status(exc)
@@ -80,16 +96,11 @@ def is_retryable_gemini_error(exc: BaseException) -> bool:
         # Permanent client errors (auth, bad schema, etc.) — do not retry.
         if 400 <= status < 500:
             return False
-    # google-genai ServerError / ClientError often embed the status in the message.
+        return False
     text = str(exc)
-    for code in (429, 500, 502, 503, 504):
-        if str(code) in text:
-            return True
-    lowered = text.lower()
-    if any(
-        token in lowered
-        for token in ("unavailable", "high demand", "resource exhausted", "try again")
-    ):
+    if _STATUS_IN_TEXT.search(text):
+        return True
+    if _GEMINI_TRANSIENT_PHRASE.search(text):
         return True
     return False
 

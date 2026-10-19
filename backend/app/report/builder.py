@@ -38,6 +38,7 @@ from app.report.retry import (
     is_retryable_api_error,
     with_retry,
 )
+from app.report.weeks import jst_range_to_analytics_dates, published_instant_to_jst_date
 from config.settings import get_settings
 
 # OAuth-backed calls (Analytics, Sheets) can fail on HTTP errors *or* on
@@ -323,6 +324,11 @@ def _safe_top_videos(
     end_date: str | None = None,
     limit: int = _RANKING_LIMIT,
 ) -> list[dict[str, Any]]:
+    window = (
+        f"{start_date}..{end_date}"
+        if start_date and end_date
+        else f"days={days}"
+    )
     try:
         return _call_api(
             f"top_videos(sort={sort})",
@@ -334,12 +340,8 @@ def _safe_top_videos(
                 end_date=end_date,
             ),
         )
-    except _OAUTH_ERRORS as err:
-        window = (
-            f"{start_date}..{end_date}"
-            if start_date and end_date
-            else f"days={days}"
-        )
+    except Exception as err:  # noqa: BLE001 - degrade; never abort the report.
+        # Covers HttpError / auth / ConnectionError after retries are exhausted.
         bundle["warnings"].append(
             f"top_videos(sort={sort}, {window}) 取得失敗: {err}"
         )
@@ -630,8 +632,13 @@ def build_weekly_bundle(
 
     prior_start = week_start - timedelta(days=7)
     prior_end = week_end - timedelta(days=7)
+    # Labels stay on the JST calendar; Analytics queries use PT dates.
     start_s, end_s = week_start.isoformat(), week_end.isoformat()
     prior_start_s, prior_end_s = prior_start.isoformat(), prior_end.isoformat()
+    api_start, api_end = jst_range_to_analytics_dates(week_start, week_end)
+    api_prior_start, api_prior_end = jst_range_to_analytics_dates(
+        prior_start, prior_end
+    )
 
     bundle: dict[str, Any] = {
         "meta": {
@@ -642,6 +649,10 @@ def build_weekly_bundle(
             "week_end": end_s,
             "prior_week_start": prior_start_s,
             "prior_week_end": prior_end_s,
+            "analytics_start": api_start,
+            "analytics_end": api_end,
+            "analytics_prior_start": api_prior_start,
+            "analytics_prior_end": api_prior_end,
             "generated_at": today.isoformat(),
         },
         "snapshot": {},
@@ -677,26 +688,30 @@ def build_weekly_bundle(
 
     videos_meta = _build_videos_meta(channel_id, bundle)
 
-    # Current week + prior week rankings (multi-metric top_videos).
+    # Current week + prior week rankings (multi-metric top_videos; PT dates).
     views_now = _safe_top_videos(
-        7, "-views", bundle, start_date=start_s, end_date=end_s
+        7, "-views", bundle, start_date=api_start, end_date=api_end
     )
     minutes_now = _safe_top_videos(
-        7, "-estimatedMinutesWatched", bundle, start_date=start_s, end_date=end_s
+        7,
+        "-estimatedMinutesWatched",
+        bundle,
+        start_date=api_start,
+        end_date=api_end,
     )
     views_prior = _safe_top_videos(
         7,
         "-views",
         bundle,
-        start_date=prior_start_s,
-        end_date=prior_end_s,
+        start_date=api_prior_start,
+        end_date=api_prior_end,
     )
     minutes_prior = _safe_top_videos(
         7,
         "-estimatedMinutesWatched",
         bundle,
-        start_date=prior_start_s,
-        end_date=prior_end_s,
+        start_date=api_prior_start,
+        end_date=api_prior_end,
     )
 
     retention_by_id = _retention_map(views_now, minutes_now)
@@ -724,8 +739,8 @@ def build_weekly_bundle(
         top_n=_WEEKLY_TOP_N,
     )
 
-    period_now = _safe_channel_totals(start_s, end_s, bundle)
-    period_prior = _safe_channel_totals(prior_start_s, prior_end_s, bundle)
+    period_now = _safe_channel_totals(api_start, api_end, bundle)
+    period_prior = _safe_channel_totals(api_prior_start, api_prior_end, bundle)
     bundle["period"] = _period_with_wow(period_now, period_prior)
 
     bundle["new_videos"] = _new_videos_in_week(
@@ -745,11 +760,11 @@ def _safe_channel_totals(
                 start_date=start_date, end_date=end_date
             ),
         )
-    except _OAUTH_ERRORS as err:
+    except Exception as err:  # noqa: BLE001 - degrade; never abort the report.
         bundle["warnings"].append(
             f"channel_totals({start_date}..{end_date}) 取得失敗: {err}"
         )
-        return {"views": 0, "minutes": 0, "avg_view_sec": 0.0, "retention_pct": None}
+        return {"views": 0, "minutes": 0, "avg_view_sec": None, "retention_pct": None}
 
 
 def _delta_pct(
@@ -879,11 +894,12 @@ def _new_videos_in_week(
     views_rows: list[dict[str, Any]],
     retention_by_id: dict[str, float],
 ) -> list[dict[str, Any]]:
-    """Videos published during the target week, with in-week performance."""
+    """Videos published during the target JST week, with in-week performance."""
     views_by_id = {r["video_id"]: r for r in views_rows}
     rows: list[dict[str, Any]] = []
     for vid, info in videos_meta.items():
-        published = _parse_published_date(info.get("published_at", ""))
+        raw = info.get("published_at_iso") or info.get("published_at", "")
+        published = published_instant_to_jst_date(str(raw))
         if published is None or published < week_start or published > week_end:
             continue
         period = views_by_id.get(vid, {})
@@ -903,12 +919,3 @@ def _new_videos_in_week(
         )
     rows.sort(key=lambda x: x["views"], reverse=True)
     return rows
-
-
-def _parse_published_date(value: str) -> date | None:
-    if not value:
-        return None
-    try:
-        return date.fromisoformat(value[:10])
-    except ValueError:
-        return None

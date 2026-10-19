@@ -315,13 +315,13 @@ def _render_weekly_rankings(bundle: dict[str, Any]) -> str:
 
     out.append("### 視聴時間 Top5")
     out.append("")
-    out.append("| # | 前週 | 視聴分 | 維持率 | 公開日 | タイトル |")
-    out.append("|---|---|---:|---:|---|---|")
+    out.append("| # | 前週 | 視聴分 | 維持率 | エンゲ% | 公開日 | タイトル |")
+    out.append("|---|---|---:|---:|---:|---|---|")
     for r in rk.get("minutes", [])[:5]:
         out.append(
             f"| {r['rank']} | {_rank_change(r)} | {_num(r.get('minutes'))} | "
-            f"{_pct(r.get('retention_pct'))} | {r.get('published_at', '')} | "
-            f"{_clean(r.get('title'))} |"
+            f"{_pct(r.get('retention_pct'))} | {_pct(r.get('engagement_pct'), 2)} | "
+            f"{r.get('published_at', '')} | {_clean(r.get('title'))} |"
         )
     out.append("")
     out.append("---")

@@ -30,18 +30,28 @@ jobs:
 
       - name: Skip when schedule coincides with monthly (1st)
         id: skip
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            DAY_UTC="$(date -u +%d)"
-            if [ "$DAY_UTC" = "01" ]; then
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-              echo "月初（UTC 1日）の schedule のため週次をスキップ（月次がカバー）"
-            else
-              echo "skip=false" >> "$GITHUB_OUTPUT"
-            fi
+          # ubuntu-latest の python3 + stdlib のみ（weeks.py は外部依存なし）
+          SKIP="$(
+            PYTHONPATH=backend python3 - <<'PY'
+          import os
+          from datetime import datetime, timezone
+          from app.report.weeks import should_skip_scheduled_weekly
+          day = int(datetime.now(timezone.utc).strftime("%d"))
+          skip = should_skip_scheduled_weekly(
+              event_name=os.environ["EVENT_NAME"],
+              utc_day_of_month=day,
+          )
+          print("true" if skip else "false")
+          PY
+          )"
+          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
+          if [ "$SKIP" = "true" ]; then
+            echo "月初（UTC 1日）の schedule のため週次をスキップ（月次がカバー）"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "手動実行のためスキップ判定なし"
+            echo "週次ジョブを継続（event=${EVENT_NAME}）"
           fi
 
       - name: Set up Python
@@ -65,17 +75,10 @@ jobs:
           if [ -n "$INPUT_WEEK" ]; then
             VALUE="$INPUT_WEEK"
           else
-            # JST 基準で直前に終わった ISO 週（Python と同じロジック）
+            # app.report.weeks.previous_iso_week（JST・直前完了週）に寄せる
             VALUE="$(
-              python - <<'PY'
-          from datetime import datetime, timedelta
-          from zoneinfo import ZoneInfo
-          today = datetime.now(ZoneInfo("Asia/Tokyo")).date()
-          week_end = today - timedelta(days=today.isoweekday())
-          week_start = week_end - timedelta(days=6)
-          y, w, _ = week_start.isocalendar()
-          print(f"{y}-W{w:02d}")
-          PY
+              PYTHONPATH=backend python3 -c \
+                'from app.report.weeks import previous_iso_week; print(previous_iso_week()[0])'
             )"
           fi
           echo "value=$VALUE" >> "$GITHUB_OUTPUT"

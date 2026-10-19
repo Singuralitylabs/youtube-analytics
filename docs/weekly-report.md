@@ -42,6 +42,12 @@ GitHub Actions（週次 cron / 手動 workflow_dispatch）
 | 月初スキップ | **schedule かつ UTC 日付が1日**のとき週次をスキップ（月次と同日衝突回避）。`workflow_dispatch` はスキップしない |
 | 前週レポート参照 | スキップで欠番があっても、存在する直近の週次ファイルを参照（暦上の前週で WoW 数値は計算） |
 
+### タイムゾーン制約（Analytics / 公開時刻）
+
+- **レポートの週ラベル・対象週**は JST の ISO 週（月〜日）。
+- **YouTube Analytics API** の `startDate` / `endDate` は **Pacific Time（America/Los_Angeles）** で解釈される。実装では JST 週の `[月 00:00, 日 23:59:59]` を PT カレンダー日へ変換してからクエリする（`app.report.weeks.jst_range_to_analytics_dates`）。日付粒度のため、週境界付近では PT 側に数時間ぶんのはみ出しがあり得る。
+- **新規公開の当週判定**は Data API の `publishedAt`（UTC 瞬間）を JST 日付に変換してから行う（UTC 日付の切り出しでは境界を誤る）。
+
 ---
 
 ## セットアップ
@@ -86,9 +92,17 @@ python scripts/generate_weekly_report.py --week 2026-W41 --notify
 
 ## 堅牢性
 
-- API / Gemini の一時障害は `app/report/retry.py` でリトライ（Gemini: 最大4回・5s→15s→45s、API: 最大3回・短いバックオフ）。
-- リトライ後も Gemini が失敗した場合は数値のみで継続し、レポート末尾と Slack に劣化を明示する。
+- API / Gemini の一時障害は `app/report/retry.py` でリトライ（Gemini: 最大4回・5s→15s→45s、API: 最大3回・短いバックオフ）。ステータスコード優先＋単語境界マッチ（`5000` 等の誤検知を避ける）。
+- リトライ後も Gemini が失敗した場合は数値のみで継続し、レポート末尾と Slack に劣化を明示する。Analytics 取得失敗も警告付きで空データ継続（ジョブ全体は落とさない）。
 - コミット前に `git pull --rebase` し、月次などとの近接 push 競合を緩和する。
+
+## 検証チェックリスト
+
+- [ ] `cd backend && python -m unittest discover -s tests -v`
+- [ ] ローカル: `--dry-run --skip-author` で表・メタ（`analytics_*` PT 日付）を確認
+- [ ] ローカル: Gemini あり `--dry-run`（任意）
+- [ ] Actions: `workflow_dispatch` で実 API＋Slack を一度流す
+- [ ] 月初月曜の schedule がスキップされることを該当日に確認
 
 ## 関連
 

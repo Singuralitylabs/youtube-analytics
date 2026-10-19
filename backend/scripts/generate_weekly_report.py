@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 import tempfile
 
@@ -37,10 +36,13 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from app.report import author, builder, renderer, slack  # noqa: E402
-from app.report.weeks import is_week_label, parse_iso_week, previous_iso_week  # noqa: E402
+from app.report.weeks import (  # noqa: E402
+    is_week_label,
+    load_prior_weekly_report,
+    parse_iso_week,
+    previous_iso_week,
+)
 from config.settings import get_settings  # noqa: E402
-
-_REPORT_RE = re.compile(r"^(\d{4}-W\d{2})\.md$")
 
 
 def _err(message: str) -> None:
@@ -66,26 +68,6 @@ def _load_playbook() -> str:
     except OSError as err:
         _err(f"プレイブックを読めません ({path}): {err}")
         return ""
-
-
-def _load_prior_report(output_dir: str, current_week: str) -> str | None:
-    """Return the text of the most recent weekly report strictly before current.
-
-    Gaps from month-start skips are fine: we pick the latest existing file
-    whose label sorts before ``current_week`` (same approach as monthly).
-    """
-    if not os.path.isdir(output_dir):
-        return None
-    candidates: list[str] = []
-    for name in os.listdir(output_dir):
-        m = _REPORT_RE.match(name)
-        if m and m.group(1) < current_week:
-            candidates.append(m.group(1))
-    if not candidates:
-        return None
-    latest = max(candidates)
-    with open(os.path.join(output_dir, f"{latest}.md"), encoding="utf-8") as fp:
-        return fp.read()
 
 
 def _placeholder_sections() -> dict[str, str]:
@@ -175,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         sections = _placeholder_sections()
     else:
         playbook = _load_playbook()
-        prior = _load_prior_report(output_dir, week)
+        prior = load_prior_weekly_report(output_dir, week)
         _err(f"前週レポート: {'あり' if prior else 'なし（初回/スキップ週扱い）'}")
         try:
             sections = author.author_weekly_report(
