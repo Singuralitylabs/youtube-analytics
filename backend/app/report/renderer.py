@@ -222,6 +222,17 @@ def render_weekly_report(bundle: dict[str, Any], sections: dict[str, str]) -> st
         f"{meta.get('prior_week_end', '')}）"
     )
     parts.append(f"> 分析実行日: {meta.get('generated_at', '')}")
+    if meta.get("analytics_start") and meta.get("analytics_end"):
+        parts.append(
+            f"> Analytics 照会（PT カレンダー・月〜日7日）: "
+            f"{meta.get('analytics_start')} 〜 {meta.get('analytics_end')}"
+        )
+    if meta.get("analytics_may_include_unfinalized"):
+        parts.append(
+            "> 注: YouTube Analytics は確定に最大48〜72時間かかるため、"
+            "週末付近は未確定値を含む場合がある"
+            "（定期実行は水曜 UTC で緩和）"
+        )
     if bundle.get("warnings"):
         parts.append(
             f"> 注: データ取得時に {len(bundle['warnings'])} 件の警告あり"

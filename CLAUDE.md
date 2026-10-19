@@ -83,7 +83,7 @@ python scripts/generate_weekly_report.py --week 2026-W41 --out /tmp/weekly --dry
 python scripts/generate_weekly_report.py --week 2026-W41 --out /tmp/weekly --dry-run
 ```
 
-詳細・セットアップは `docs/monthly-report.md` / `docs/weekly-report.md`。自動実行は `.github/workflows/monthly-report.yml`（毎月1日）と `.github/workflows/weekly-report.yml`（毎週月曜。月初1日の schedule はスキップ）。
+詳細・セットアップは `docs/monthly-report.md` / `docs/weekly-report.md`。自動実行は `.github/workflows/monthly-report.yml`（毎月1日）と `.github/workflows/weekly-report.yml`（毎週水曜。UTC 1日の schedule はスキップ）。
 
 ---
 

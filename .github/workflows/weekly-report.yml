@@ -2,11 +2,12 @@ name: Weekly Analytics Report
 
 # 毎週、直前に終わった ISO 週（月〜日・JST）の軽量レポートを生成し、
 # reports/weekly/ にコミットして Slack に要約＋GitHub URL を通知する。
-# 月曜が毎月1日（月次実行日）に当たる schedule 実行はスキップする。
+# Analytics 確定遅れ（48〜72h）を見越し水曜に実行する。
+# UTC 1日の schedule は月次と同日衝突のためスキップする。
 on:
   schedule:
-    # 毎週月曜 00:00 UTC（= 09:00 JST）
-    - cron: "0 0 * * 1"
+    # 毎週水曜 00:00 UTC（= 09:00 JST）。日曜締めの週が概ね確定してから集計する。
+    - cron: "0 0 * * 3"
   workflow_dispatch:
     inputs:
       week:
@@ -73,6 +74,10 @@ jobs:
           INPUT_WEEK: ${{ github.event.inputs.week }}
         run: |
           if [ -n "$INPUT_WEEK" ]; then
+            if ! printf '%s' "$INPUT_WEEK" | grep -Eq '^[0-9]{4}-W[0-9]{2}$'; then
+              echo "::error::INPUT_WEEK の形式が不正です: ${INPUT_WEEK}（YYYY-Www）"
+              exit 1
+            fi
             VALUE="$INPUT_WEEK"
           else
             # app.report.weeks.previous_iso_week（JST・直前完了週）に寄せる
@@ -116,15 +121,17 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main || git pull --rebase origin HEAD
           mkdir -p reports/weekly
           git add reports/weekly/*.md
           if git diff --staged --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "コミット対象の変更なし"
           else
+            # 追跡済みファイルの再生成で unstaged のまま pull --rebase すると失敗する。
+            # add → commit → pull --rebase → push の順にする。
             git commit -m "Add weekly insight report ${TARGET_WEEK}"
-            git push
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -148,6 +155,7 @@ jobs:
             echo "SLACK_WEBHOOK_URL 未設定のため失敗通知をスキップ"
             exit 0
           fi
+          # TARGET_WEEK は Resolve ステップで形式検証済み（または weeks.py 算出）
           cat > /tmp/slack_failure.json <<EOF
           {"text": ":x: *週次レポート生成に失敗しました*（${TARGET_WEEK}）\n${RUN_URL} でログを確認してください"}
           EOF

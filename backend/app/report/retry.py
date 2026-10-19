@@ -56,6 +56,20 @@ def _http_status(exc: BaseException) -> int | None:
     return None
 
 
+def _is_httpx_transport_error(exc: BaseException) -> bool:
+    """True for httpx transport failures used by google-genai.
+
+    ``ConnectError`` / ``ReadTimeout`` / ``RemoteProtocolError`` inherit
+    ``httpx.TransportError`` but **not** the stdlib ``ConnectionError`` /
+    ``TimeoutError``, so they must be matched explicitly.
+    """
+    try:
+        import httpx
+    except ImportError:
+        return False
+    return isinstance(exc, httpx.TransportError)
+
+
 def is_retryable_http_status(status: int) -> bool:
     """True for rate-limit / transient server errors worth retrying."""
     return status in (429, 500, 502, 503, 504)
@@ -64,6 +78,8 @@ def is_retryable_http_status(status: int) -> bool:
 def is_retryable_api_error(exc: BaseException) -> bool:
     """Retry YouTube / Sheets failures that look transient."""
     if isinstance(exc, (TimeoutError, ConnectionError, BrokenPipeError)):
+        return True
+    if _is_httpx_transport_error(exc):
         return True
     status = _http_status(exc)
     if status is not None:
@@ -88,6 +104,8 @@ def is_retryable_gemini_error(exc: BaseException) -> bool:
     ``\"500\" in text`` (which falsely matches ``5000``).
     """
     if isinstance(exc, (TimeoutError, ConnectionError, BrokenPipeError)):
+        return True
+    if _is_httpx_transport_error(exc):
         return True
     status = _http_status(exc)
     if status is not None:

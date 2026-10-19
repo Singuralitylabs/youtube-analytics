@@ -37,17 +37,18 @@ GitHub Actions（週次 cron / 手動 workflow_dispatch）
 |---|---|
 | 週の区切り | 月曜〜日曜、JST（ISO 週）。ラベルは `YYYY-Www`（例: `2026-W41`） |
 | 対象週 | 実行時点で直前に終わった週。`--week` / workflow 入力で指定可 |
-| 比較 | 前週比（WoW）。再生数が少ない週は率を出さず絶対値のみ |
-| 定期実行 | 毎週月曜 00:00 UTC（= 09:00 JST） |
+| 比較 | 前週比（WoW）。再生数が少ない週は率を出さず絶対値のみ。**直前完了週以外の手動再生成では登録者・総再生の前週比を出さない**（ライブ統計との誤比較を避ける） |
+| 定期実行 | 毎週**水曜** 00:00 UTC（= 09:00 JST）。Analytics 確定遅れ（48〜72h）を見越す |
 | 月初スキップ | **schedule かつ UTC 日付が1日**のとき週次をスキップ（月次と同日衝突回避）。`workflow_dispatch` はスキップしない |
 | 前週レポート参照 | スキップで欠番があっても、存在する直近の週次ファイルを参照（暦上の前週で WoW 数値は計算） |
 
 ### タイムゾーン制約（Analytics / 公開時刻）
 
 - **レポートの週ラベル・対象週**は JST の ISO 週（月〜日）。
-- **YouTube Analytics API** の `startDate` / `endDate` は **Pacific Time（America/Los_Angeles）** で解釈される。実装では JST 週の `[月 00:00, 日 23:59:59]` を PT カレンダー日へ変換してからクエリする（`app.report.weeks.jst_range_to_analytics_dates`）。日付粒度のため、週境界付近では PT 側に数時間ぶんのはみ出しがあり得る。
+- **YouTube Analytics API** の `startDate` / `endDate` は **Pacific Time（America/Los_Angeles）** で解釈される。実装では JST 週と同じカレンダー日付の **PT 月〜日 7 日間**を照会する（`jst_range_to_analytics_dates`）。JST 瞬間を PT に変換すると 8 日になり隣週と 1 日重なるため、日付の一致（7 日）を優先し、約 16〜17 時間の時差ずれは許容する。
+- **未確定データ**: Analytics は確定に最大 48〜72 時間かかる。定期実行を水曜にずらし、レポート先頭にも未確定の注記を出す。
 - **新規公開の当週判定と表の公開日表示**は Data API の `publishedAt`（UTC 瞬間）を JST 日付に変換して行う（UTC 日付の切り出しでは境界を誤る）。
-- **新規公開の初動指標**は当週 `top_videos` に無い動画（Top50 外）でも `video_period_metrics` で個別取得する。
+- **新規公開の初動指標**は当週 `top_videos` に無い動画（Top50 外）でも `video_period_metrics`（`sort=-views`）で個別取得する。
 
 ---
 
@@ -61,7 +62,7 @@ GitHub Actions（週次 cron / 手動 workflow_dispatch）
 
 ### 自動（GitHub Actions）
 
-`.github/workflows/weekly-report.yml` が毎週月曜 00:00 UTC に起動し、直前週を対象に生成→コミット→Slack 通知する。手動実行は Actions タブ → *Weekly Analytics Report* → *Run workflow*（`week` 入力で対象週を指定可能、空欄なら直前週）。
+`.github/workflows/weekly-report.yml` が毎週水曜 00:00 UTC に起動し、直前週を対象に生成→コミット→Slack 通知する。手動実行は Actions タブ → *Weekly Analytics Report* → *Run workflow*（`week` 入力で対象週を指定可能、空欄なら直前週。形式は `YYYY-Www`）。
 
 ### ローカル
 

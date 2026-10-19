@@ -29,7 +29,6 @@ from app.collectors.sheets import HttpError as SheetsHttpError
 from app.collectors.sheets import sheets_client
 from app.collectors.youtube_analytics import HttpError as AnalyticsHttpError
 from app.collectors.youtube_analytics import youtube_analytics_client
-from app.collectors.youtube_data import HttpError as DataHttpError
 from app.collectors.youtube_data import youtube_data_client
 from app.report.retry import (
     API_BACKOFF_BASE_S,
@@ -39,6 +38,7 @@ from app.report.retry import (
     with_retry,
 )
 from app.report.weeks import (
+    is_most_recent_completed_week,
     jst_range_to_analytics_dates,
     published_at_jst_display,
     published_instant_to_jst_date,
@@ -144,7 +144,7 @@ def build_data_bundle(
             "channel_title",
             lambda: youtube_data_client.get_channel_title(channel_id),
         )
-    except (DataHttpError, LookupError) as err:
+    except Exception as err:  # noqa: BLE001 - degrade; never abort the report.
         bundle["warnings"].append(f"channel title 取得失敗: {err}")
 
     try:
@@ -152,7 +152,7 @@ def build_data_bundle(
             "channel_stats",
             lambda: youtube_data_client.get_channel_stats(channel_id),
         )
-    except (DataHttpError, LookupError) as err:
+    except Exception as err:  # noqa: BLE001 - degrade; never abort the report.
         bundle["warnings"].append(f"channel stats 取得失敗: {err}")
         stats = {}
     bundle["snapshot"] = _build_snapshot(stats)
@@ -304,7 +304,7 @@ def _build_videos_meta(
             "get_videos",
             lambda: youtube_data_client.get_videos(video_ids),
         )
-    except (DataHttpError, LookupError) as err:
+    except Exception as err:  # noqa: BLE001 - degrade; never abort the report.
         bundle["warnings"].append(f"動画一覧の取得失敗: {err}")
         return {}
 
@@ -657,6 +657,7 @@ def build_weekly_bundle(
             "analytics_end": api_end,
             "analytics_prior_start": api_prior_start,
             "analytics_prior_end": api_prior_end,
+            "analytics_may_include_unfinalized": True,
             "generated_at": today.isoformat(),
         },
         "snapshot": {},
@@ -672,7 +673,7 @@ def build_weekly_bundle(
             "channel_title",
             lambda: youtube_data_client.get_channel_title(channel_id),
         )
-    except (DataHttpError, LookupError) as err:
+    except Exception as err:  # noqa: BLE001 - degrade; never abort the report.
         bundle["warnings"].append(f"channel title 取得失敗: {err}")
 
     try:
@@ -680,14 +681,14 @@ def build_weekly_bundle(
             "channel_stats",
             lambda: youtube_data_client.get_channel_stats(channel_id),
         )
-    except (DataHttpError, LookupError) as err:
+    except Exception as err:  # noqa: BLE001 - degrade; never abort the report.
         bundle["warnings"].append(f"channel stats 取得失敗: {err}")
         stats = {}
 
     snapshot = _build_snapshot(stats)
     history = _safe_read_history(bundle)
     bundle["subscriber_history"] = history
-    _apply_wow_delta(snapshot, history, week_end)
+    _apply_wow_delta(snapshot, history, week_end, today=today)
     bundle["snapshot"] = snapshot
 
     videos_meta = _build_videos_meta(channel_id, bundle)
@@ -819,8 +820,22 @@ def _apply_wow_delta(
     snapshot: dict[str, Any],
     history: list[dict[str, Any]],
     week_end: date,
+    *,
+    today: date | None = None,
 ) -> None:
-    """Fill week-over-week deltas from the Sheets row nearest to prior week end."""
+    """Fill week-over-week deltas from the Sheets row nearest to prior week end.
+
+    Live Data API stats are only meaningful for the most recently completed
+    week. For older ``--week`` regenerations, skip WoW so multi-month growth
+    is not mislabeled as a single-week delta.
+    """
+    if not is_most_recent_completed_week(week_end, today):
+        return
+
+    # No live totals → avoid bogus deltas like ``0 - baseline``.
+    if not snapshot.get("subscriber_count") and not snapshot.get("total_view_count"):
+        return
+
     dated = [
         (_parse_collected_at(rec.get("collected_at", "")), rec)
         for rec in history
@@ -844,12 +859,12 @@ def _apply_wow_delta(
     view_base = int(base_rec.get("total_view_count", 0))
 
     snapshot["delta_baseline_date"] = base_date.isoformat()
-    if sub_base:
+    if sub_base and sub_now:
         snapshot["subscriber_delta"] = sub_now - sub_base
         snapshot["subscriber_delta_pct"] = _delta_pct(
             sub_now, sub_base, min_baseline=_MIN_SUBS_FOR_PCT
         )
-    if view_base:
+    if view_base and view_now:
         snapshot["total_view_delta"] = view_now - view_base
         snapshot["total_view_delta_pct"] = _delta_pct(
             view_now, view_base, min_baseline=_MIN_VIEWS_FOR_PCT

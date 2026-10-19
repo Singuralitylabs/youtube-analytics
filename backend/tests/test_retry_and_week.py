@@ -21,6 +21,7 @@ from app.report.retry import (  # noqa: E402
     with_retry,
 )
 from app.report.weeks import (  # noqa: E402
+    is_most_recent_completed_week,
     jst_range_to_analytics_dates,
     load_prior_weekly_report,
     parse_iso_week,
@@ -46,11 +47,21 @@ class WeekHelpersTest(unittest.TestCase):
         self.assertEqual(start, date(2026, 10, 12))
         self.assertEqual(end, date(2026, 10, 18))
 
-    def test_jst_range_to_analytics_dates_shifts_start_to_pt(self) -> None:
-        # 2026-10-05 00:00 JST = 2026-10-04 08:00 PDT → API start 2026-10-04
+    def test_jst_range_to_analytics_dates_is_seven_days(self) -> None:
+        # Same calendar dates (PT Mon–Sun), not JST-midnight→PT (which was 8 days).
         start, end = jst_range_to_analytics_dates(date(2026, 10, 5), date(2026, 10, 11))
-        self.assertEqual(start, "2026-10-04")
+        self.assertEqual(start, "2026-10-05")
         self.assertEqual(end, "2026-10-11")
+        self.assertEqual(
+            (date.fromisoformat(end) - date.fromisoformat(start)).days + 1, 7
+        )
+
+    def test_jst_range_consecutive_weeks_do_not_overlap(self) -> None:
+        a0, a1 = jst_range_to_analytics_dates(date(2026, 10, 5), date(2026, 10, 11))
+        b0, b1 = jst_range_to_analytics_dates(date(2026, 10, 12), date(2026, 10, 18))
+        self.assertEqual(a1, "2026-10-11")
+        self.assertEqual(b0, "2026-10-12")
+        self.assertNotEqual(a1, b0)
 
     def test_published_instant_jst_crosses_utc_midnight(self) -> None:
         # 2026-10-04T16:00:00Z = 2026-10-05 01:00 JST → belongs to W41 Mon
@@ -90,6 +101,23 @@ class WeekHelpersTest(unittest.TestCase):
             Path(tmp, "2026-W41.md").write_text("W41", encoding="utf-8")
             prior = load_prior_weekly_report(tmp, "2026-W41")
             self.assertEqual(prior, "W39")
+
+    def test_load_prior_crosses_year_w53_to_w01(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "2026-W53.md").write_text("W53", encoding="utf-8")
+            prior = load_prior_weekly_report(tmp, "2027-W01")
+            self.assertEqual(prior, "W53")
+        # Lexicographic week labels still order across the year boundary.
+        self.assertLess("2026-W53", "2027-W01")
+
+    def test_is_most_recent_completed_week(self) -> None:
+        # Monday 2026-10-19 → latest completed Sunday is 2026-10-18
+        self.assertTrue(
+            is_most_recent_completed_week(date(2026, 10, 18), date(2026, 10, 19))
+        )
+        self.assertFalse(
+            is_most_recent_completed_week(date(2026, 7, 12), date(2026, 10, 19))
+        )
 
 
 class RetryTest(unittest.TestCase):
@@ -143,6 +171,16 @@ class RetryTest(unittest.TestCase):
 
     def test_api_retryable_connection(self) -> None:
         self.assertTrue(is_retryable_api_error(ConnectionError("reset")))
+
+    def test_httpx_transport_errors_are_retryable_for_gemini(self) -> None:
+        import httpx
+
+        self.assertTrue(is_retryable_gemini_error(httpx.ConnectError("boom")))
+        self.assertTrue(is_retryable_gemini_error(httpx.ReadTimeout("slow")))
+        self.assertTrue(
+            is_retryable_gemini_error(httpx.RemoteProtocolError("disconnect"))
+        )
+        self.assertTrue(is_retryable_api_error(httpx.ConnectError("boom")))
 
 
 class BuilderWeeklyLogicTest(unittest.TestCase):
@@ -303,7 +341,7 @@ class BuilderWeeklyLogicTest(unittest.TestCase):
             start_date: str | None = None,
             end_date: str | None = None,
         ) -> list:
-            if start_date == "2026-10-04":  # current week PT
+            if start_date == "2026-10-05":  # current week PT calendar (= JST dates)
                 if "views" in sort:
                     return [
                         {
@@ -401,8 +439,9 @@ class BuilderWeeklyLogicTest(unittest.TestCase):
                     week_start, week_end, week_label="2026-W41"
                 )
 
-        self.assertEqual(bundle["meta"]["analytics_start"], "2026-10-04")
+        self.assertEqual(bundle["meta"]["analytics_start"], "2026-10-05")
         self.assertEqual(bundle["meta"]["analytics_end"], "2026-10-11")
+        self.assertTrue(bundle["meta"]["analytics_may_include_unfinalized"])
         self.assertEqual(bundle["period"]["views"], 300)
         self.assertEqual(bundle["period"]["views_delta"], 100)
         views_rank = bundle["rankings"]["views"]
@@ -410,6 +449,41 @@ class BuilderWeeklyLogicTest(unittest.TestCase):
         self.assertEqual(views_rank[0]["prior_rank"], 2)
         self.assertEqual(views_rank[0]["rank_delta"], 1)
         self.assertEqual([v["video_id"] for v in bundle["new_videos"]], ["v2"])
+
+    def test_apply_wow_delta_skips_historical_week(self) -> None:
+        snapshot = {
+            "subscriber_count": 2000,
+            "total_view_count": 100000,
+            "subscriber_delta": None,
+            "subscriber_delta_pct": None,
+            "total_view_delta": None,
+            "total_view_delta_pct": None,
+            "delta_baseline_date": None,
+        }
+        history = [
+            {
+                "collected_at": "2026-07-05 00:00:00",
+                "subscriber_count": 1000,
+                "total_view_count": 50000,
+            }
+        ]
+        # Regenerating an old week in October must not treat live stats as WoW.
+        builder._apply_wow_delta(
+            snapshot, history, date(2026, 7, 12), today=date(2026, 10, 19)
+        )
+        self.assertIsNone(snapshot["subscriber_delta"])
+        self.assertIsNone(snapshot["delta_baseline_date"])
+
+    def test_build_videos_meta_connection_error_degrades(self) -> None:
+        bundle: dict = {"warnings": []}
+
+        def boom(*_a: object, **_k: object) -> list:
+            raise ConnectionError("dns fail")
+
+        with patch("app.report.builder._call_api", side_effect=boom):
+            meta = builder._build_videos_meta("UCtest", bundle)
+        self.assertEqual(meta, {})
+        self.assertTrue(any("dns fail" in w for w in bundle["warnings"]))
 
 
 class VideoPeriodMetricsTest(unittest.TestCase):
@@ -529,6 +603,41 @@ class RendererSlackWeeklyTest(unittest.TestCase):
         self.assertIn("週次インサイト 2026-W41", summary)
         self.assertIn("reports/weekly/2026-W41.md", summary)
         self.assertIn("アクション #1", summary)
+
+    def test_render_notes_unfinalized_analytics(self) -> None:
+        bundle = {
+            "meta": {
+                "week": "2026-W41",
+                "channel_id": "UCtest",
+                "channel_title": "Test",
+                "week_start": "2026-10-05",
+                "week_end": "2026-10-11",
+                "prior_week_start": "2026-09-28",
+                "prior_week_end": "2026-10-04",
+                "analytics_start": "2026-10-05",
+                "analytics_end": "2026-10-11",
+                "analytics_may_include_unfinalized": True,
+                "generated_at": "2026-10-15",
+            },
+            "snapshot": {},
+            "period": {},
+            "rankings": {"views": [], "minutes": []},
+            "new_videos": [],
+            "warnings": [],
+            "author_failed": True,
+        }
+        sections = {
+            "key_finding": "_fail_",
+            "next_actions": "_fail_",
+            "prior_validation": "_fail_",
+        }
+        md = renderer.render_weekly_report(bundle, sections)
+        self.assertIn("未確定値を含む場合がある", md)
+        self.assertIn("数値のみのレポート", md)
+        self.assertIn("Analytics 照会（PT カレンダー・月〜日7日）", md)
+
+        summary = slack.build_weekly_summary(bundle, sections, "2026-W41")
+        self.assertIn("解釈生成に失敗", summary)
 
 
 if __name__ == "__main__":
