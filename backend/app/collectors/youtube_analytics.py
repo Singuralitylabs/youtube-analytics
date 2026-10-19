@@ -273,6 +273,9 @@ class YouTubeAnalyticsClient:
                 ),
                 dimensions="video",
                 filters=f"video=={','.join(chunk)}",
+                # Channel Reports require sort when maxResults is set
+                # (same constraint as top_videos / rankings).
+                sort="-views",
                 maxResults=len(chunk),
             )
             headers = [h["name"] for h in resp.get("columnHeaders", [])]

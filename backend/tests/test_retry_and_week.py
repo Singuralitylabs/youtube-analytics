@@ -13,6 +13,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.collectors.youtube_analytics import YouTubeAnalyticsClient  # noqa: E402
 from app.report import builder, renderer, slack  # noqa: E402
 from app.report.retry import (  # noqa: E402
     is_retryable_api_error,
@@ -409,6 +410,36 @@ class BuilderWeeklyLogicTest(unittest.TestCase):
         self.assertEqual(views_rank[0]["prior_rank"], 2)
         self.assertEqual(views_rank[0]["rank_delta"], 1)
         self.assertEqual([v["video_id"] for v in bundle["new_videos"]], ["v2"])
+
+
+class VideoPeriodMetricsTest(unittest.TestCase):
+    def test_query_includes_sort_with_max_results(self) -> None:
+        """dimensions=video + maxResults requires sort (Channel Reports rule)."""
+        client = YouTubeAnalyticsClient()
+        captured: dict = {}
+
+        def fake_query(**kwargs: object) -> dict:
+            captured.update(kwargs)
+            return {
+                "columnHeaders": [
+                    {"name": "video"},
+                    {"name": "views"},
+                    {"name": "estimatedMinutesWatched"},
+                    {"name": "averageViewDuration"},
+                    {"name": "averageViewPercentage"},
+                ],
+                "rows": [["vid1", 10, 2, 30.0, 40.0]],
+            }
+
+        with patch.object(client, "_query", side_effect=fake_query):
+            rows = client.video_period_metrics(
+                ["vid1"], start_date="2026-10-04", end_date="2026-10-11"
+            )
+        self.assertEqual(captured.get("sort"), "-views")
+        self.assertEqual(captured.get("maxResults"), 1)
+        self.assertEqual(captured.get("dimensions"), "video")
+        self.assertEqual(rows[0]["video_id"], "vid1")
+        self.assertEqual(rows[0]["views"], 10)
 
 
 class RendererSlackWeeklyTest(unittest.TestCase):
