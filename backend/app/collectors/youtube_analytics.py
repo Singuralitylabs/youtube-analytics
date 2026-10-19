@@ -146,7 +146,13 @@ class YouTubeAnalyticsClient:
         ]
 
     def top_videos(
-        self, days: int, limit: int = 50, sort: str = "-views"
+        self,
+        days: int,
+        limit: int = 50,
+        sort: str = "-views",
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> list[dict[str, Any]]:
         """Top videos with views, watch-time, avg duration AND retention in one call.
 
@@ -155,8 +161,19 @@ class YouTubeAnalyticsClient:
         along as columns rather than being the sort key (sorting by those metrics
         with ``dimensions=video`` returns 400/500). ``sort`` must be a supported
         key such as ``-views`` or ``-estimatedMinutesWatched``.
+
+        Pass ``start_date`` / ``end_date`` (YYYY-MM-DD) to query an arbitrary
+        window; when omitted the trailing ``days`` window is used (unchanged
+        default for existing callers).
+
+        Note: YouTube Analytics interprets these calendar dates in Pacific Time
+        (America/Los_Angeles). Callers targeting a JST week should convert via
+        ``app.report.weeks.jst_range_to_analytics_dates`` first.
         """
-        start, end = _date_range(days)
+        if start_date and end_date:
+            start, end = start_date, end_date
+        else:
+            start, end = _date_range(days)
         resp = self._query(
             startDate=start,
             endDate=end,
@@ -184,6 +201,99 @@ class YouTubeAnalyticsClient:
                     ),
                 }
             )
+        return result
+
+    def channel_totals(
+        self,
+        *,
+        days: int | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Channel-level totals for a trailing or explicit date window."""
+        if start_date and end_date:
+            start, end = start_date, end_date
+        elif days is not None:
+            start, end = _date_range(days)
+        else:
+            raise ValueError("days または start_date/end_date を指定してください")
+        resp = self._query(
+            startDate=start,
+            endDate=end,
+            metrics=(
+                "views,estimatedMinutesWatched,"
+                "averageViewDuration,averageViewPercentage"
+            ),
+        )
+        headers = [h["name"] for h in resp.get("columnHeaders", [])]
+        rows = resp.get("rows") or []
+        if not rows:
+            # Empty window: totals are zero, but retention is unknown (not 0%).
+            return {
+                "views": 0,
+                "minutes": 0,
+                "avg_view_sec": None,
+                "retention_pct": None,
+            }
+        rec = dict(zip(headers, rows[0]))
+        return {
+            "views": int(rec.get("views", 0) or 0),
+            "minutes": int(rec.get("estimatedMinutesWatched", 0) or 0),
+            "avg_view_sec": round(float(rec.get("averageViewDuration", 0) or 0), 1),
+            "retention_pct": round(
+                float(rec.get("averageViewPercentage", 0) or 0), 1
+            ),
+        }
+
+    def video_period_metrics(
+        self,
+        video_ids: list[str],
+        *,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        """Per-video views / watch-time / retention for an explicit date window.
+
+        Used for weekly "new video" rows that may fall outside ``top_videos``
+        (maxResults=50). IDs are queried in chunks with ``filters=video==…``.
+        """
+        if not video_ids:
+            return []
+        # Analytics accepts a comma-separated video filter; keep chunks modest.
+        chunk_size = 50
+        result: list[dict[str, Any]] = []
+        for i in range(0, len(video_ids), chunk_size):
+            chunk = video_ids[i : i + chunk_size]
+            resp = self._query(
+                startDate=start_date,
+                endDate=end_date,
+                metrics=(
+                    "views,estimatedMinutesWatched,"
+                    "averageViewDuration,averageViewPercentage"
+                ),
+                dimensions="video",
+                filters=f"video=={','.join(chunk)}",
+                # Channel Reports require sort when maxResults is set
+                # (same constraint as top_videos / rankings).
+                sort="-views",
+                maxResults=len(chunk),
+            )
+            headers = [h["name"] for h in resp.get("columnHeaders", [])]
+            for row in resp.get("rows") or []:
+                rec = dict(zip(headers, row))
+                result.append(
+                    {
+                        "video_id": rec.get("video", ""),
+                        "views": int(rec.get("views", 0) or 0),
+                        "minutes": int(rec.get("estimatedMinutesWatched", 0) or 0),
+                        "avg_view_sec": round(
+                            float(rec.get("averageViewDuration", 0) or 0), 1
+                        ),
+                        "retention_pct": round(
+                            float(rec.get("averageViewPercentage", 0) or 0), 1
+                        ),
+                    }
+                )
         return result
 
     def compare(

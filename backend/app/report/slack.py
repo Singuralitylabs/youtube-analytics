@@ -22,17 +22,25 @@ def _log(message: str) -> None:
     print(f"[slack] {message}", file=sys.stderr)
 
 
-def github_report_url(month: str) -> str:
-    """Construct the GitHub blob URL for the committed report."""
+def github_report_url(label: str, *, subdir: str = "") -> str:
+    """Construct the GitHub blob URL for a committed report.
+
+    ``label`` is the file stem (``YYYY-MM`` or ``YYYY-Www``). ``subdir`` is an
+    optional path under ``REPORT_OUTPUT_DIR`` (e.g. ``weekly``).
+    """
     s = get_settings()
-    path = f"{s.REPORT_OUTPUT_DIR.strip('/')}/{month}.md"
+    base = s.REPORT_OUTPUT_DIR.strip("/")
+    if subdir:
+        path = f"{base}/{subdir.strip('/')}/{label}.md"
+    else:
+        path = f"{base}/{label}.md"
     return f"https://github.com/{s.GITHUB_REPO}/blob/{s.GITHUB_BRANCH}/{path}"
 
 
 def build_summary(
     bundle: dict[str, Any], sections: dict[str, str], month: str
 ) -> str:
-    """Assemble the Slack mrkdwn message body."""
+    """Assemble the monthly Slack mrkdwn message body."""
     meta = bundle.get("meta", {})
     snap = bundle.get("snapshot", {})
     title = meta.get("channel_title") or meta.get("channel_id", "")
@@ -64,6 +72,50 @@ def build_summary(
             lines.extend(f"• {h}" for h in headlines)
 
     url = github_report_url(month)
+    lines.append("")
+    lines.append(f"<{url}|レポート全文を見る> 📄")
+
+    if bundle.get("warnings"):
+        lines.append(f"_（データ取得時の警告 {len(bundle['warnings'])} 件あり）_")
+
+    return "\n".join(lines)
+
+
+def build_weekly_summary(
+    bundle: dict[str, Any], sections: dict[str, str], week: str
+) -> str:
+    """Assemble the weekly Slack mrkdwn message body."""
+    meta = bundle.get("meta", {})
+    snap = bundle.get("snapshot", {})
+    period = bundle.get("period", {})
+    title = meta.get("channel_title") or meta.get("channel_id", "")
+
+    lines = [f":calendar: *週次インサイト {week}* — {title}"]
+    degraded = bool(bundle.get("author_failed"))
+
+    sub = _fmt_delta(snap.get("subscriber_count"), snap.get("subscriber_delta"))
+    week_views = _fmt_delta(period.get("views"), period.get("views_delta"))
+    lines.append(
+        f"登録者 {sub} / 当週再生 {week_views} / "
+        f"維持率 {_fmt_pct(period.get('retention_pct'))}"
+    )
+
+    if degraded:
+        lines.append("")
+        lines.append(":warning: *解釈生成に失敗したため数値のみのレポートです*")
+    else:
+        snippet = _lead_sentence(sections.get("key_finding", ""))
+        if snippet:
+            lines.append("")
+            lines.append(f"*今週の最重要ポイント*: {snippet}")
+
+        headlines = _action_headlines(sections.get("next_actions", ""))
+        if headlines:
+            lines.append("")
+            lines.append("*来週のアクション*:")
+            lines.extend(f"• {h}" for h in headlines)
+
+    url = github_report_url(week, subdir="weekly")
     lines.append("")
     lines.append(f"<{url}|レポート全文を見る> 📄")
 
@@ -137,13 +189,28 @@ def _hypothesis_headlines(markdown: str, limit: int = 3) -> list[str]:
     heading with no description, so the Slack digest carries the actual
     countermeasure text rather than uninformative labels.
     """
+    return _markdown_headlines(
+        markdown, limit=limit, bare_re=r"仮説\s*#?\d+[:：]?"
+    )
+
+
+def _action_headlines(markdown: str, limit: int = 2) -> list[str]:
+    """Pull descriptive '### アクション #N: …' headings from next_actions."""
+    return _markdown_headlines(
+        markdown, limit=limit, bare_re=r"アクション\s*#?\d+[:：]?"
+    )
+
+
+def _markdown_headlines(
+    markdown: str, *, limit: int, bare_re: str
+) -> list[str]:
     headlines: list[str] = []
     for raw in markdown.splitlines():
         line = raw.strip()
         if not line.startswith("###"):
             continue
         text = line.lstrip("#").strip()
-        if not text or _is_wrapper_heading(text):
+        if not text or _is_wrapper_heading(text, bare_re=bare_re):
             continue
         headlines.append(text)
         if len(headlines) >= limit:
@@ -151,10 +218,19 @@ def _hypothesis_headlines(markdown: str, limit: int = 3) -> list[str]:
     return headlines
 
 
-def _is_wrapper_heading(text: str) -> bool:
+def _fmt_pct(value: Any) -> str:
+    if value is None:
+        return "—"
+    try:
+        return f"{float(value):.1f}%"
+    except (ValueError, TypeError):
+        return "—"
+
+
+def _is_wrapper_heading(text: str, *, bare_re: str = r"仮説\s*#?\d+[:：]?") -> bool:
     """True for generic wrapper/label headings that carry no insight."""
     # "仮説カード 2026-05-28" etc.
     if text.replace("【", "").replace("】", "").startswith("仮説カード"):
         return True
-    # Bare "仮説 #1" / "仮説1" with no trailing description.
-    return bool(re.fullmatch(r"仮説\s*#?\d+[:：]?", text))
+    # Bare "仮説 #1" / "アクション #1" with no trailing description.
+    return bool(re.fullmatch(bare_re, text))

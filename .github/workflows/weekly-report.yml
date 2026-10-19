@@ -1,0 +1,160 @@
+name: Weekly Analytics Report
+
+# 毎週、直前に終わった ISO 週（月〜日・JST）の軽量レポートを生成し、
+# reports/weekly/ にコミットして Slack に要約＋GitHub URL を通知する。
+# Analytics 確定遅れ（48〜72h）を見越し水曜に実行する。
+# UTC 1日の schedule は月次と同日衝突のためスキップする。
+on:
+  schedule:
+    # 毎週水曜 00:00 UTC（= 09:00 JST）。日曜締めの週が概ね確定してから集計する。
+    - cron: "0 0 * * 3"
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "対象週 YYYY-Www（空欄なら直前に終わった週を自動算出）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weekly-report
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skip when schedule coincides with monthly (1st)
+        id: skip
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # ubuntu-latest の python3 + stdlib のみ（weeks.py は外部依存なし）
+          SKIP="$(
+            PYTHONPATH=backend python3 - <<'PY'
+          import os
+          from datetime import datetime, timezone
+          from app.report.weeks import should_skip_scheduled_weekly
+          day = int(datetime.now(timezone.utc).strftime("%d"))
+          skip = should_skip_scheduled_weekly(
+              event_name=os.environ["EVENT_NAME"],
+              utc_day_of_month=day,
+          )
+          print("true" if skip else "false")
+          PY
+          )"
+          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
+          if [ "$SKIP" = "true" ]; then
+            echo "月初（UTC 1日）の schedule のため週次をスキップ（月次がカバー）"
+          else
+            echo "週次ジョブを継続（event=${EVENT_NAME}）"
+          fi
+
+      - name: Set up Python
+        if: steps.skip.outputs.skip != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        if: steps.skip.outputs.skip != 'true'
+        run: pip install -r backend/requirements.txt
+
+      - name: Resolve target week
+        if: steps.skip.outputs.skip != 'true'
+        id: week
+        env:
+          INPUT_WEEK: ${{ github.event.inputs.week }}
+        run: |
+          if [ -n "$INPUT_WEEK" ]; then
+            if ! printf '%s' "$INPUT_WEEK" | grep -Eq '^[0-9]{4}-W[0-9]{2}$'; then
+              echo "::error::INPUT_WEEK の形式が不正です: ${INPUT_WEEK}（YYYY-Www）"
+              exit 1
+            fi
+            VALUE="$INPUT_WEEK"
+          else
+            # app.report.weeks.previous_iso_week（JST・直前完了週）に寄せる
+            VALUE="$(
+              PYTHONPATH=backend python3 -c \
+                'from app.report.weeks import previous_iso_week; print(previous_iso_week()[0])'
+            )"
+          fi
+          echo "value=$VALUE" >> "$GITHUB_OUTPUT"
+          echo "対象週: $VALUE"
+
+      - name: Materialize OAuth credentials
+        if: steps.skip.outputs.skip != 'true'
+        working-directory: backend
+        env:
+          TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
+          CLIENT_SECRETS_JSON: ${{ secrets.GOOGLE_CLIENT_SECRETS_JSON }}
+        run: |
+          printf '%s' "$TOKEN_JSON" > token.json
+          printf '%s' "$CLIENT_SECRETS_JSON" > client_secrets.json
+
+      - name: Generate report
+        if: steps.skip.outputs.skip != 'true'
+        working-directory: backend
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Slack / blob URL を実行ブランチに合わせる（非 main 手動実行のずれ防止）
+          GITHUB_BRANCH: ${{ github.ref_name }}
+          TARGET_WEEK: ${{ steps.week.outputs.value }}
+        run: |
+          python scripts/generate_weekly_report.py --week "$TARGET_WEEK"
+
+      - name: Commit report
+        if: steps.skip.outputs.skip != 'true'
+        id: commit
+        env:
+          TARGET_WEEK: ${{ steps.week.outputs.value }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          chmod +x .github/scripts/commit-weekly-report.sh
+          .github/scripts/commit-weekly-report.sh "$TARGET_WEEK" "$GITHUB_REF_NAME"
+
+      - name: Notify Slack
+        if: steps.skip.outputs.skip != 'true' && steps.commit.outputs.changed == 'true'
+        working-directory: backend
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
+          TARGET_WEEK: ${{ steps.week.outputs.value }}
+        run: |
+          python scripts/generate_weekly_report.py --week "$TARGET_WEEK" --notify-only
+
+      - name: Notify Slack on failure
+        if: failure() && steps.skip.outputs.skip != 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TARGET_WEEK: ${{ steps.week.outputs.value }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL 未設定のため失敗通知をスキップ"
+            exit 0
+          fi
+          # TARGET_WEEK は Resolve ステップで形式検証済み（または weeks.py 算出）
+          cat > /tmp/slack_failure.json <<EOF
+          {"text": ":x: *週次レポート生成に失敗しました*（${TARGET_WEEK}）\n${RUN_URL} でログを確認してください"}
+          EOF
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            --data @/tmp/slack_failure.json "$SLACK_WEBHOOK_URL" \
+            || echo "Slack 失敗通知の送信に失敗しました"
+
+      - name: Cleanup credentials
+        if: always() && steps.skip.outputs.skip != 'true'
+        working-directory: backend
+        run: rm -f token.json client_secrets.json

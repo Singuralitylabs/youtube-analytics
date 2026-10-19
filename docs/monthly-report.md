@@ -110,6 +110,7 @@ python scripts/generate_monthly_report.py --month 2026-05 --notify
 
 ## 関連
 
+- [`weekly-report.md`](./weekly-report.md) — 週次レポート（月次の軽量版。同じ Secrets・ハイブリッド方式）
 - [`analysis-playbook.md`](./analysis-playbook.md) — レポートが従う分析方法論（KPIツリー・月次サイクル・パターンA〜F・仮説カード書式・アンチパターン）
 - [`api.md`](./api.md) — collector が叩く各 API の仕様
 - [`sheets.md`](./sheets.md) — 登録者数履歴の保存形式

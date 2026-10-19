@@ -4,7 +4,7 @@
 
 ## プロジェクトの現状
 
-**現行の主機能は「月次レポートの自動生成」**です。毎月、直近90日の分析＋対策レポートを自動生成して `reports/YYYY-MM.md` にコミットし、Slack に通知します（GitHub Actions）。
+**現行の主機能は「月次・週次レポートの自動生成」**です。毎月、直近90日の分析＋対策レポートを `reports/YYYY-MM.md` に、毎週、直前 ISO 週の軽量レポートを `reports/weekly/YYYY-Www.md` にコミットし、Slack に通知します（GitHub Actions）。
 
 - **フロントエンド（`frontend/`）は開発凍結中**（コードは残存。手を入れない）。
 - **バックエンド（`backend/`）は実装済み**。FastAPI の HTTP 層（routers）は現状維持しつつ、レポート生成（`backend/app/report/`）が collector 群を直接 import して再利用する。
@@ -12,6 +12,7 @@
 
 ドキュメント:
 - `docs/monthly-report.md` — **月次レポート自動生成のパイプライン・セットアップ・実行（最初に読む）**
+- `docs/weekly-report.md` — **週次レポート自動生成（月次の軽量版・月初スキップあり）**
 - `docs/analysis-playbook.md` — レポートが従う分析方法論
 - `docs/design.md` — 凍結中の Web アプリ構成の設計
 - `docs/api.md` — 全10エンドポイントのリクエスト・レスポンス仕様
@@ -67,17 +68,22 @@ cd backend
 uvicorn app.main:app --reload   # ホットリロード付き開発サーバー（凍結中のフロント用 API）
 ```
 
-### 月次レポート生成（現行の主機能）
+### 月次・週次レポート生成（現行の主機能）
 
 ```bash
 cd backend
-# データ/描画のみ確認（Gemini 呼び出しなし・退避先へ出力）
+# 月次: データ/描画のみ確認（Gemini 呼び出しなし・退避先へ出力）
 python scripts/generate_monthly_report.py --month 2026-05 --out /tmp/reports --dry-run --skip-author
-# 解釈・対策まで生成（要 GEMINI_API_KEY）
+# 月次: 解釈・対策まで生成（要 GEMINI_API_KEY）
 python scripts/generate_monthly_report.py --month 2026-05 --out /tmp/reports --dry-run
+
+# 週次: データ/描画のみ確認
+python scripts/generate_weekly_report.py --week 2026-W41 --out /tmp/weekly --dry-run --skip-author
+# 週次: 解釈・対策まで生成（要 GEMINI_API_KEY）
+python scripts/generate_weekly_report.py --week 2026-W41 --out /tmp/weekly --dry-run
 ```
 
-詳細・セットアップは `docs/monthly-report.md`。自動実行は `.github/workflows/monthly-report.yml`（毎月1日、前月分）。
+詳細・セットアップは `docs/monthly-report.md` / `docs/weekly-report.md`。自動実行は `.github/workflows/monthly-report.yml`（毎月1日）と `.github/workflows/weekly-report.yml`（毎週水曜。UTC 1日の schedule はスキップ）。
 
 ---
 
@@ -104,13 +110,15 @@ Render（FastAPI 0.135）
 | `app/collectors/youtube_data.py` | YouTube Data API v3 クライアント |
 | `app/collectors/youtube_analytics.py` | YouTube Analytics API クライアント（`top_videos` で多指標を1クエリ取得） |
 | `app/collectors/sheets.py` | Google Sheets API クライアント |
-| `app/report/builder.py` | 月次レポートの確定データ集計（collector を直接 import） |
-| `app/report/author.py` | Gemini API で解釈・対策セクションを執筆（`response_json_schema` で8キーJSONを強制） |
+| `app/report/builder.py` | 月次・週次レポートの確定データ集計（collector を直接 import） |
+| `app/report/author.py` | Gemini API で解釈・対策セクションを執筆（月次8キー / 週次3キーの JSON 強制、リトライ付き） |
 | `app/report/renderer.py` | 確定表＋LLM 文章を結合し Markdown を組み立て・書き出し |
-| `app/report/slack.py` | Slack Webhook へ要約＋GitHub URL を通知 |
+| `app/report/slack.py` | Slack Webhook へ要約＋GitHub URL を通知（週次は `reports/weekly/`） |
+| `app/report/retry.py` | Gemini / API 共通の指数バックオフ＋ジッターリトライ |
 | `config/settings.py` | 環境変数集約（pydantic-settings。`GEMINI_*`/`SLACK_WEBHOOK_URL`/`REPORT_OUTPUT_DIR`/`GITHUB_*` を追加） |
 | `scripts/setup_oauth.py` | 初回 OAuth 2.0 ブラウザ認証 |
 | `scripts/generate_monthly_report.py` | 月次レポート生成 CLI（builder→author→renderer→Slack） |
+| `scripts/generate_weekly_report.py` | 週次レポート生成 CLI（同上・軽量版） |
 
 ### フロントエンド（`frontend/src/`）
 

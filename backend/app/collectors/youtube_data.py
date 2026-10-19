@@ -141,12 +141,15 @@ class YouTubeDataClient:
                 snippet = item.get("snippet", {})
                 stats = item.get("statistics", {})
                 content = item.get("contentDetails", {})
-                published = (snippet.get("publishedAt") or "")[:10]
+                published_iso = snippet.get("publishedAt") or ""
                 results.append(
                     {
                         "video_id": item.get("id", ""),
                         "title": snippet.get("title", ""),
-                        "published_at": published,
+                        # Display date (UTC calendar day) for tables.
+                        "published_at": published_iso[:10],
+                        # Full RFC3339 instant for JST week membership checks.
+                        "published_at_iso": published_iso,
                         "duration_sec": _iso8601_to_seconds(
                             content.get("duration", "")
                         ),
