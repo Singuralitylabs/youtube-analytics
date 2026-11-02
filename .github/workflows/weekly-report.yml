@@ -17,7 +17,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: weekly-report
@@ -116,23 +115,22 @@ jobs:
         run: |
           python scripts/generate_weekly_report.py --week "$TARGET_WEEK"
 
-      - name: Commit report and open PR
+      - name: Commit report
         if: steps.skip.outputs.skip != 'true'
         id: commit
         env:
-          GH_TOKEN: ${{ github.token }}
           TARGET_WEEK: ${{ steps.week.outputs.value }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
-          .github/scripts/commit-report-pr.sh weekly "$TARGET_WEEK" 'reports/weekly/*.md' "$GITHUB_REF_NAME"
+          chmod +x .github/scripts/commit-weekly-report.sh
+          .github/scripts/commit-weekly-report.sh "$TARGET_WEEK" "$GITHUB_REF_NAME"
 
       - name: Notify Slack
         if: steps.skip.outputs.skip != 'true' && steps.commit.outputs.changed == 'true'
         working-directory: backend
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          # レポートは PR ブランチ上にあるため、blob URL をそのブランチに向ける
-          GITHUB_BRANCH: ${{ steps.commit.outputs.branch }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
           TARGET_WEEK: ${{ steps.week.outputs.value }}
         run: |
           python scripts/generate_weekly_report.py --week "$TARGET_WEEK" --notify-only

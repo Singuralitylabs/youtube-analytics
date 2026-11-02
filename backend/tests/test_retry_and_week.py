@@ -562,24 +562,26 @@ class BuilderWeeklyLogicTest(unittest.TestCase):
 
 
 class CommitScriptOrderTest(unittest.TestCase):
-    def test_commit_script_orders_add_commit_push_pr(self) -> None:
+    def test_commit_script_orders_add_before_pull(self) -> None:
         root = Path(__file__).resolve().parents[2]
-        script = (root / ".github" / "scripts" / "commit-report-pr.sh").read_text(
+        script = (root / ".github" / "scripts" / "commit-weekly-report.sh").read_text(
             encoding="utf-8"
         )
         # コメント行を除き、実コマンド行の出現順だけを検証する
         commands = [
             line.strip()
             for line in script.splitlines()
-            if line.strip().startswith(("git ", "gh "))
+            if line.strip().startswith("git ")
         ]
         add_at = next(i for i, c in enumerate(commands) if c.startswith("git add "))
         commit_at = next(i for i, c in enumerate(commands) if c.startswith("git commit "))
+        pull_at = next(
+            i for i, c in enumerate(commands) if c.startswith("git pull --rebase ")
+        )
         push_at = next(i for i, c in enumerate(commands) if c.startswith("git push "))
-        pr_at = next(i for i, c in enumerate(commands) if c.startswith("gh pr create"))
         self.assertLess(add_at, commit_at)
-        self.assertLess(commit_at, push_at)
-        self.assertLess(push_at, pr_at)
+        self.assertLess(commit_at, pull_at)
+        self.assertLess(pull_at, push_at)
         self.assertIn("Order (do not rearrange)", script)
 
 
