@@ -115,12 +115,12 @@ python scripts/generate_monthly_report.py --month 2026-05 --notify
 - [`api.md`](./api.md) — collector が叩く各 API の仕様
 - [`sheets.md`](./sheets.md) — 登録者数履歴の保存形式
 
-## main ブランチ保護との両立（bypass トークン）
+## main ブランチ保護との両立（GitHub App）
 
 main のルールセットが「PR 必須」の場合、`GITHUB_TOKEN` の push は拒否される（GH013）。
-ワークフローは checkout に `secrets.REPORT_PUSH_TOKEN` を使うので、次のいずれかを用意する。
+月次・週次ワークフローは、ルールセットの bypass に登録した GitHub App のトークンで checkout / push する。
 
-1. Settings → Rules → Rulesets の対象ルールセットで **Bypass list** に、トークンの持ち主（GitHub App もしくは Repository admin 等のロール）を追加する。
-2. そのトークン（fine-grained PAT は `Contents: Read and write`、有効期限に注意 / GitHub App のインストールトークン）を Secrets に `REPORT_PUSH_TOKEN` として登録する。
-
-月次・週次とも同じシークレットを使う。
+1. Org（または個人）Settings → Developer settings → GitHub Apps で App を作成（Webhook は無効、Repository permissions: `Contents: Read and write`）。
+2. App の Private key を生成し、このリポジトリにインストールする。
+3. リポジトリ Settings → Rules → Rulesets → 対象ルールセットの **Bypass list** に App を追加（Bypass mode: Always）。
+4. Settings → Secrets and variables → Actions に登録: Variable `REPORT_APP_ID`（App ID）、Secret `REPORT_APP_PRIVATE_KEY`（秘密鍵 .pem の全文）。

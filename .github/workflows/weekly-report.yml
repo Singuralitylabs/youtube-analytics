@@ -26,12 +26,18 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     steps:
+      # main のルールセット（PR 必須）を bypass できる GitHub App のトークンで push する。
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.REPORT_APP_ID }}
+          private-key: ${{ secrets.REPORT_APP_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # main のルールセット（PR 必須）を bypass できるトークンで push する。
-          # 未設定なら従来の GITHUB_TOKEN にフォールバック（その場合 push は拒否され得る）。
-          token: ${{ secrets.REPORT_PUSH_TOKEN || github.token }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Skip when schedule coincides with monthly (1st)
         id: skip
