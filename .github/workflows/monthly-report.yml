@@ -24,8 +24,18 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     steps:
+      # main のルールセット（PR 必須）を bypass できる GitHub App のトークンで push する。
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.REPORT_APP_ID }}
+          private-key: ${{ secrets.REPORT_APP_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Set up Python
         uses: actions/setup-python@v5

@@ -114,3 +114,13 @@ python scripts/generate_monthly_report.py --month 2026-05 --notify
 - [`analysis-playbook.md`](./analysis-playbook.md) — レポートが従う分析方法論（KPIツリー・月次サイクル・パターンA〜F・仮説カード書式・アンチパターン）
 - [`api.md`](./api.md) — collector が叩く各 API の仕様
 - [`sheets.md`](./sheets.md) — 登録者数履歴の保存形式
+
+## main ブランチ保護との両立（GitHub App）
+
+main のルールセットが「PR 必須」の場合、`GITHUB_TOKEN` の push は拒否される（GH013）。
+月次・週次ワークフローは、ルールセットの bypass に登録した GitHub App のトークンで checkout / push する。
+
+1. Org（または個人）Settings → Developer settings → GitHub Apps で App を作成（Webhook は無効、Repository permissions: `Contents: Read and write`）。
+2. App の Private key を生成し、このリポジトリにインストールする。
+3. リポジトリ Settings → Rules → Rulesets → 対象ルールセットの **Bypass list** に App を追加（Bypass mode: Always）。
+4. Settings → Secrets and variables → Actions に登録: Variable `REPORT_APP_ID`（App ID）、Secret `REPORT_APP_PRIVATE_KEY`（秘密鍵 .pem の全文）。
