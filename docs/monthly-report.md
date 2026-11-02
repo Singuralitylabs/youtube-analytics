@@ -114,3 +114,13 @@ python scripts/generate_monthly_report.py --month 2026-05 --notify
 - [`analysis-playbook.md`](./analysis-playbook.md) — レポートが従う分析方法論（KPIツリー・月次サイクル・パターンA〜F・仮説カード書式・アンチパターン）
 - [`api.md`](./api.md) — collector が叩く各 API の仕様
 - [`sheets.md`](./sheets.md) — 登録者数履歴の保存形式
+
+## main ブランチ保護との両立（bypass トークン）
+
+main のルールセットが「PR 必須」の場合、`GITHUB_TOKEN` の push は拒否される（GH013）。
+ワークフローは checkout に `secrets.REPORT_PUSH_TOKEN` を使うので、次のいずれかを用意する。
+
+1. Settings → Rules → Rulesets の対象ルールセットで **Bypass list** に、トークンの持ち主（GitHub App もしくは Repository admin 等のロール）を追加する。
+2. そのトークン（fine-grained PAT は `Contents: Read and write`、有効期限に注意 / GitHub App のインストールトークン）を Secrets に `REPORT_PUSH_TOKEN` として登録する。
+
+月次・週次とも同じシークレットを使う。

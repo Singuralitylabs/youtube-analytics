@@ -26,6 +26,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # main のルールセット（PR 必須）を bypass できるトークンで push する。
+          # 未設定なら従来の GITHUB_TOKEN にフォールバック（その場合 push は拒否され得る）。
+          token: ${{ secrets.REPORT_PUSH_TOKEN || github.token }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
