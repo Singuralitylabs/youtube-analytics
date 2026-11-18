@@ -63,11 +63,16 @@ def _is_httpx_transport_error(exc: BaseException) -> bool:
     ``httpx.TransportError`` but **not** the stdlib ``ConnectionError`` /
     ``TimeoutError``, so they must be matched explicitly.
     """
-    try:
-        import httpx
-    except ImportError:
-        return False
-    return isinstance(exc, httpx.TransportError)
+    # google-genai 3.x depends on ``httpx2`` (``httpx`` is only an optional
+    # extra), so check whichever of the two is installed.
+    for module_name in ("httpx", "httpx2"):
+        try:
+            module = __import__(module_name)
+        except ImportError:
+            continue
+        if isinstance(exc, module.TransportError):
+            return True
+    return False
 
 
 def is_retryable_http_status(status: int) -> bool:
