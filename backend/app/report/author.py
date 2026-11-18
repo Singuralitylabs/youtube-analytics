@@ -132,7 +132,12 @@ def _author(
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    # system_instruction / response_json_schema は v1beta でのみ有効。
+    # 新しい google-genai の既定が v1 だと 400 になるため明示的に固定する。
+    client = genai.Client(
+        api_key=settings.GEMINI_API_KEY,
+        http_options=types.HttpOptions(api_version="v1beta"),
+    )
 
     system_instruction = (
         _SYSTEM_INSTRUCTIONS + "\n\n# 分析プレイブック\n\n" + playbook_text
