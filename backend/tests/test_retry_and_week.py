@@ -192,7 +192,10 @@ class RetryTest(unittest.TestCase):
         self.assertTrue(is_retryable_api_error(ConnectionError("reset")))
 
     def test_httpx_transport_errors_are_retryable_for_gemini(self) -> None:
-        import httpx
+        try:
+            import httpx
+        except ImportError:
+            import httpx2 as httpx
 
         self.assertTrue(is_retryable_gemini_error(httpx.ConnectError("boom")))
         self.assertTrue(is_retryable_gemini_error(httpx.ReadTimeout("slow")))
